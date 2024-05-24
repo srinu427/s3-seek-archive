@@ -30,8 +30,10 @@ fn writer_loop(
     .map_err(|e| format!("error creating temp db file: {e}"))?;
   // Create table
   conn
-    .execute("CREATE TABLE entry_list \
-    (name VARCHAR(2048), type VARCHAR(8), offset BIGINT, size BIGINT)", []
+    .execute(
+      "CREATE TABLE entry_list \
+    (name VARCHAR(2048), type VARCHAR(8), offset BIGINT, size BIGINT)",
+      [],
     )
     .map_err(|e| format!("error creating mysql table: {e}"))?;
 
@@ -117,7 +119,7 @@ pub fn compress_directory(
             .to_string_lossy()
             .to_string();
           if entry_name == "" {
-            continue
+            continue;
           }
           if entry.path().is_file() {
             let temp_file_path =
