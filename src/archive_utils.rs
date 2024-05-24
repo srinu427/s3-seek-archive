@@ -14,8 +14,8 @@ fn writer_loop(
   output_name: PathBuf,
   rx: mpsc::Receiver<Option<WriteThreadInput>>,
 ) -> Result<(), String> {
-  let output_blob = PathBuf::from(format!("{}.s4a_blob", output_name.display()));
-  let output_db = PathBuf::from(format!("{}.s4a_db", output_name.display()));
+  let output_blob = PathBuf::from(format!("{}.s4a.blob", output_name.to_string_lossy()));
+  let output_db = PathBuf::from(format!("{}.s4a.db", output_name.to_string_lossy()));
 
   if output_db.exists() {
     if output_db.is_file() {
@@ -28,17 +28,19 @@ fn writer_loop(
 
   let conn = rusqlite::Connection::open(&output_db)
     .map_err(|e| format!("error creating temp db file: {e}"))?;
+  // Create table
   conn
-    .execute(
-      "CREATE TABLE entry_list (name VARCHAR(2048), type VARCHAR(8), offset BIGINT, size BIGINT)",
-      [],
+    .execute("CREATE TABLE entry_list \
+    (name VARCHAR(2048), type VARCHAR(8), offset BIGINT, size BIGINT)", []
     )
     .map_err(|e| format!("error creating mysql table: {e}"))?;
 
+  // Prepare SQL insert statement
   let mut insert_row_stmt = conn
     .prepare("INSERT INTO entry_list (name, type, offset, size) VALUES (?1, ?2, ?3, ?4)")
     .map_err(|e| format!("error preparing insert statement: {e}"))?;
 
+  // Writer to output file
   let mut buf_writer = io::BufWriter::with_capacity(
     128 * 1024,
     fs::File::create(&output_blob)
@@ -118,7 +120,8 @@ pub fn compress_directory(
             continue
           }
           if entry.path().is_file() {
-            let temp_file_path = tmp_dir_path.join(entry_name.replace("\\", ":").replace("/", ":"));
+            let temp_file_path =
+              tmp_dir_path.join(format!("{}.xz", entry_name.replace("\\", "#").replace("/", "#")));
             let tx_thread_owned = tx.clone();
             s.spawn(move |_| {
               let _ = compress_utils::compress_lzma(entry.path(), &temp_file_path)
