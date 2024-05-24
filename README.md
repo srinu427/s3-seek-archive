@@ -23,24 +23,11 @@ Compressing a directory
 Usage: s3-seek-archive.exe compress [OPTIONS] --input-path <INPUT_PATH> --output-path <OUTPUT_PATH>
 
 Options:
-  -i, --input-path <INPUT_PATH>
-          Input directory name. If a file is provided, empty archive is generated
-
-  -o, --output-path <OUTPUT_PATH>
-          Compress Mode: Output files' name. A data file <output_name>.s4a.blob and sqlite index <output_name>.s4a.db will be generated.
-
-          Uncompress Mode: Output directory name
-
-  -t, --thread-count <THREAD_COUNT>
-          Number of files to compress in parallel (excluding the main thread). one more thread will be used for IO
-
-          [default: 1]
-
-  -h, --help
-          Print help (see a summary with '-h')
-
-  -V, --version
-          Print version
+  -i, --input-path <INPUT_PATH>      Input directory name. If a file is provided, empty archive is generated
+  -o, --output-path <OUTPUT_PATH>    Compress Mode: Output files' name. A data file <output_name>.s4a.blob and sqlite index <output_name>.s4a.db will be generated
+  -t, --thread-count <THREAD_COUNT>  Number of files to compress in parallel (excluding the main thread). one more thread will be used for IO [default: 1]
+  -h, --help                         Print help
+  -V, --version                      Print version
 ```
 
 ## Building

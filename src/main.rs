@@ -25,8 +25,6 @@ struct CompressArgs {
   input_path: PathBuf,
   /// Compress Mode: Output files' name.
   /// A data file <output_name>.s4a.blob and sqlite index <output_name>.s4a.db will be generated.
-  ///
-  /// Uncompress Mode: Output directory name
   #[arg(long, short = 'o')]
   output_path: PathBuf,
   /// Number of files to compress in parallel (excluding the main thread).
