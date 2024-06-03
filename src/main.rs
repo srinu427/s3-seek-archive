@@ -1,5 +1,6 @@
 mod archive_utils;
 
+use crate::archive_utils::uncompress_archive;
 use archive_utils::compress_directory;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
@@ -57,11 +58,17 @@ fn main() {
         &compress_args.output_path,
         compress_args.thread_count,
       ) {
-        println!("{e}");
+        eprintln!("{e}");
       }
     }
-    AppCommands::Uncompress(_) => {
-      println!("lol not done");
+    AppCommands::Uncompress(uncompress_args) => {
+      if let Err(e) = uncompress_archive(
+        &uncompress_args.input_path,
+        &uncompress_args.output_path,
+        uncompress_args.thread_count,
+      ) {
+        eprintln!("{e}");
+      }
     }
   }
 }
