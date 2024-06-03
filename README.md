@@ -37,6 +37,7 @@ If desired, you can build s3-seek-archive yourself. You will need a working `Rus
 Once the prerequisites have been installed, compilation on your native platform is as simple as running the following in a terminal:
 
 ```
+cd rust-compressor
 cargo build --release
 ```
 
