@@ -1,7 +1,5 @@
-mod archive_utils;
-
-use crate::archive_utils::uncompress_archive;
-use archive_utils::compress_directory;
+use s4_utils::uncompress_archive;
+use s4_utils::compress_directory;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 

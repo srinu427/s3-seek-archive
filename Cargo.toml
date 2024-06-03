@@ -7,8 +7,4 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.5.4", features = ["derive"] }
-glob = "0.3.1"
-walkdir = "2.5.0"
-rusqlite = { version = "0.31.0", features = ["bundled"] }
-rust-lzma = "0.6.0"
-rayon = { version = "1.10.0" }
+s4-utils = {path = "s4-utils"}

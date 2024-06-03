@@ -1,4 +1,5 @@
 mod compress_utils;
+mod compress_utils;
 
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
@@ -161,7 +162,7 @@ pub fn compress_directory(
 }
 
 #[derive(Clone)]
-struct S4ArchiveEntryDetails {
+pub struct S4ArchiveEntryDetails {
   name: String,
   _type: String,
   offset: u64,
@@ -235,56 +236,14 @@ impl LocalS4ArchiveReader {
   }
 
   pub fn extract_files(&self, file_names: &[&str], output_dir: &Path) -> Result<(), String> {
-    match fs::File::open(&self.blob_path) {
-      Ok(fr) => {
-        let mut o_reader = Some(io::BufReader::with_capacity(128 * 1024, fr));
-        for f_name in file_names {
-          let Some(entry_info) = self.entry_map.get(*f_name) else {
-            eprintln!("can't find {} in archive. skipping", *f_name);
-            continue;
-          };
-          let out_file_name = output_dir.join(&entry_info.name);
-          if entry_info._type == "FOLDER" {
-            let _ = fs::create_dir_all(&out_file_name)
-              .inspect_err(|e| eprintln!("cant create dir {:?}: {e}. skipping", &out_file_name));
-            continue;
-          } else if entry_info._type == "FILE" {
-            out_file_name.parent().map(fs::create_dir_all);
-          } else {
-            eprintln!(
-              "invalid entry type \"{}\" for {}. skipping",
-              &entry_info._type, &entry_info.name
-            );
-            continue;
-          }
-
-          match fs::File::create(&out_file_name) {
-            Ok(fw) => {
-              let Ok(mut writer) = lzma::LzmaWriter::new_decompressor(fw)
-                .inspect_err(|e| eprintln!("error initializing decompressor: {e}"))
-              else {
-                continue;
-              };
-              let Some(mut reader) = o_reader.take() else { continue };
-              if let Err(e) = reader.seek(SeekFrom::Start(entry_info.offset)) {
-                o_reader = Some(reader);
-                eprintln!("error seeking in blob file: {e}");
-                continue;
-              }
-              let mut chunk_reader = reader.take(entry_info.size);
-              let _ = io::copy(&mut chunk_reader, &mut writer)
-                .inspect_err(|e| eprintln!("error decompressing: {e}"));
-              o_reader = Some(chunk_reader.into_inner());
-            }
-            Err(e) => {
-              eprintln!("error opening {}: {e}", out_file_name.to_string_lossy());
-              continue;
-            }
-          }
-        }
-        Ok(())
-      }
-      Err(e) => Err(format!("error opening blob: {e}")),
+    for f_name in file_names {
+      let Some(entry_info) = self.entry_map.get(*f_name) else {
+        eprintln!("can't find {} in archive. skipping", *f_name);
+        continue;
+      };
+      let out_file_name = output_dir.join(&entry_info.name);
+      let _ = self.extract_entry(entry_info, out_file_name)
+        .inspect_err(|e| eprintln!("error while extracting: {e}. skipping"));
     }
   }
 
