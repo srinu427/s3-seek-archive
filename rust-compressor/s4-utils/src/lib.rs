@@ -7,7 +7,7 @@ use std::fmt::Debug;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::{fs, io, thread};
+use std::{fs, io, thread, time};
 use walkdir::WalkDir;
 
 enum WriteThreadData {
@@ -37,7 +37,7 @@ fn writer_loop(
     }
   }
 
-  let conn = rusqlite::Connection::open(&output_db)
+  let conn = rusqlite::Connection::open_in_memory()
     .map_err(|e| format!("error creating temp db file: {e}"))?;
   // Create table
   conn
@@ -110,6 +110,13 @@ fn writer_loop(
       .inspect_err(|e| eprintln!("error adding {} to index: {e}", &sql_ins.0));
   }
   let _ = insert_row_stmt.finalize().map_err(|e| eprintln!("error flushing data to index: {e}"));
+  let mut disk_db_conn = rusqlite::Connection::open(&output_db)
+    .map_err(|e| format!("error creating temp db file: {e}"))?;
+  let db_backup_handle = rusqlite::backup::Backup::new(&conn, &mut disk_db_conn)
+    .map_err(|e| format!("error flushing data to index: {e}"))?;
+  db_backup_handle.run_to_completion(5, time::Duration::from_nanos(0), None)
+    .map_err(|e| format!("error flushing data to index: {e}"))?;
+
   Ok(())
 }
 
