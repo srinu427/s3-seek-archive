@@ -61,6 +61,7 @@ fn writer_loop(
   );
 
   let mut offset = 0;
+  let mut sql_inserts = Vec::with_capacity(1000);
   for r_msg in rx {
     if let Some(msg) = r_msg {
       match msg.data {
@@ -69,9 +70,7 @@ fn writer_loop(
             eprintln!("error writing {:?} to output blob: {e}", &msg.entry_name);
             continue
           }
-          let _ = insert_row_stmt
-            .execute((&msg.entry_name, "FILE", offset, data.len() as u64))
-            .inspect_err(|e| eprintln!("error adding {} to index: {e}", &msg.entry_name));
+          sql_inserts.push((msg.entry_name.clone(), "FILE", offset, data.len() as u64));
           offset += data.len() as u64;
         }
         WriteThreadData::TempFile(temp_file) => {
@@ -87,23 +86,30 @@ fn writer_loop(
           let write_size = io::copy(&mut buf_reader, &mut buf_writer).unwrap_or(0);
           let _ =
             fs::remove_file(&temp_file).inspect_err(|e| eprintln!("error removing temp file: {e}"));
-          let _ = insert_row_stmt
-            .execute((&msg.entry_name, "FILE", offset, write_size))
-            .inspect_err(|e| eprintln!("error adding {} to index: {e}", &msg.entry_name));
+          sql_inserts.push((msg.entry_name.clone(), "FILE", offset, write_size));
           offset += write_size;
         }
         WriteThreadData::Folder => {
+          sql_inserts.push((msg.entry_name.clone(), "FOLDER", 0u64, 0u64));
+        }
+      }
+      if sql_inserts.len() >= 1000 {
+        for sql_ins in sql_inserts.drain(..) {
           let _ = insert_row_stmt
-            .execute((&msg.entry_name, "FOLDER", 0u64, 0u64))
-            .inspect_err(|e| println!("error adding {} to index: {e}", &msg.entry_name));
+            .execute(sql_ins.clone())
+            .inspect_err(|e| eprintln!("error adding {} to index: {e}", &sql_ins.0));
         }
       }
     } else {
       break;
     }
   }
+  for sql_ins in sql_inserts.drain(..) {
+    let _ = insert_row_stmt
+      .execute(sql_ins.clone())
+      .inspect_err(|e| eprintln!("error adding {} to index: {e}", &sql_ins.0));
+  }
   let _ = insert_row_stmt.finalize().map_err(|e| eprintln!("error flushing data to index: {e}"));
-
   Ok(())
 }
 
