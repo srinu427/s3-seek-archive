@@ -4,14 +4,20 @@ use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::{fs, io, thread};
 use walkdir::WalkDir;
 
+enum WriteThreadData {
+  RawBytes(Vec<u8>),
+  TempFile(PathBuf),
+  Folder,
+}
+
 struct WriteThreadInput {
-  temp_file: Option<PathBuf>,
+  data: WriteThreadData,
   entry_name: String,
 }
 
@@ -57,27 +63,40 @@ fn writer_loop(
   let mut offset = 0;
   for r_msg in rx {
     if let Some(msg) = r_msg {
-      if let Some(temp_file) = &msg.temp_file {
-        match fs::File::open(temp_file) {
-          Ok(fr) => {
-            let mut buf_reader = io::BufReader::with_capacity(128 * 1024, fr);
-            let write_size = io::copy(&mut buf_reader, &mut buf_writer).unwrap_or(0);
-            let _ = insert_row_stmt
-              .execute((&msg.entry_name, "FILE", offset, write_size))
-              .inspect_err(|e| eprintln!("error adding {} to index: {e}", &msg.entry_name));
-            offset += write_size;
+      match msg.data {
+        WriteThreadData::RawBytes(data) => {
+          if let Err(e) = buf_writer.write_all(&data) {
+            eprintln!("error writing {:?} to output blob: {e}", &msg.entry_name);
+            continue
           }
-          Err(e) => eprintln!(
-            "can't open temp file {:?}: {e}. externally modified?. skipping it",
-            temp_file
-          ),
+          let _ = insert_row_stmt
+            .execute((&msg.entry_name, "FILE", offset, data.len() as u64))
+            .inspect_err(|e| eprintln!("error adding {} to index: {e}", &msg.entry_name));
+          offset += data.len() as u64;
         }
-        let _ =
-          fs::remove_file(temp_file).inspect_err(|e| eprintln!("error removing temp file: {e}"));
-      } else {
-        let _ = insert_row_stmt
-          .execute((&msg.entry_name, "FOLDER", 0u64, 0u64))
-          .inspect_err(|e| println!("error adding {} to index: {e}", &msg.entry_name));
+        WriteThreadData::TempFile(temp_file) => {
+          let Ok(fr) = fs::File::open(&temp_file).inspect_err(|e| {
+            eprintln!(
+              "can't open temp file {:?}: {e}. externally modified?. skipping it",
+              &temp_file
+            )
+          }) else {
+            continue;
+          };
+          let mut buf_reader = io::BufReader::with_capacity(128 * 1024, fr);
+          let write_size = io::copy(&mut buf_reader, &mut buf_writer).unwrap_or(0);
+          let _ =
+            fs::remove_file(&temp_file).inspect_err(|e| eprintln!("error removing temp file: {e}"));
+          let _ = insert_row_stmt
+            .execute((&msg.entry_name, "FILE", offset, write_size))
+            .inspect_err(|e| eprintln!("error adding {} to index: {e}", &msg.entry_name));
+          offset += write_size;
+        }
+        WriteThreadData::Folder => {
+          let _ = insert_row_stmt
+            .execute((&msg.entry_name, "FOLDER", 0u64, 0u64))
+            .inspect_err(|e| println!("error adding {} to index: {e}", &msg.entry_name));
+        }
       }
     } else {
       break;
@@ -135,19 +154,32 @@ pub fn compress_directory(
           tmp_dir_path.join(format!("{}.xz", entry_name.replace("\\", "#").replace("/", "#")));
         let tx_thread_owned = tx.clone();
         s.spawn(move |_| {
-          let _ = compress_utils::compress_lzma(entry.path(), &temp_file_path)
-            .inspect_err(|e| eprintln!("error compressing {:?}: {e}", entry.path()))
-            .map(|_| {
-              let _ = tx_thread_owned
-                .send(Some(WriteThreadInput { temp_file: Some(temp_file_path), entry_name }))
-                .inspect_err(|e| {
-                  eprintln!("error writing {:?} to archive: {e}", entry.path());
-                });
-            });
+          let file_len = fs::metadata(entry.path()).map(|x| x.len()).unwrap_or(u64::MAX);
+          if file_len > 8 * 1024 * 1024 {
+            let _ = compress_utils::compress_lzma(entry.path(), &temp_file_path)
+              .inspect_err(|e| eprintln!("error compressing {:?}: {e}", entry.path()))
+              .map(|_| {
+                let _ = tx_thread_owned
+                  .send(Some(WriteThreadInput { data: WriteThreadData::TempFile(temp_file_path), entry_name }))
+                  .inspect_err(|e| {
+                    eprintln!("error writing {:?} to archive: {e}", entry.path());
+                  });
+              });
+          } else {
+            let _ = compress_utils::compress_lzma_in_mem(entry.path())
+              .inspect_err(|e| eprintln!("error compressing {:?}: {e}", entry.path()))
+              .map(|data| {
+                let _ = tx_thread_owned
+                  .send(Some(WriteThreadInput { data: WriteThreadData::RawBytes(data), entry_name }))
+                  .inspect_err(|e| {
+                    eprintln!("error writing {:?} to archive: {e}", entry.path());
+                  });
+              });
+          }
         });
       } else if entry.path().is_dir() {
         let _ = tx
-          .send(Some(WriteThreadInput { temp_file: None, entry_name }))
+          .send(Some(WriteThreadInput { data: WriteThreadData::Folder, entry_name }))
           .inspect_err(|e| eprintln!("error writing {:?} to archive: {e}", entry.path()));
       }
     }
