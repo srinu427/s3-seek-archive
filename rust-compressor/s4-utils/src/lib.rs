@@ -1,8 +1,7 @@
 mod compress_utils;
-mod compress_utils;
 
+use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::{Read, Seek, SeekFrom};
@@ -235,25 +234,25 @@ impl LocalS4ArchiveReader {
     }
   }
 
-  pub fn extract_files(&self, file_names: &[&str], output_dir: &Path) -> Result<(), String> {
+  pub fn extract_files(&self, file_names: &[&str], output_dir: &Path) {
     for f_name in file_names {
       let Some(entry_info) = self.entry_map.get(*f_name) else {
         eprintln!("can't find {} in archive. skipping", *f_name);
         continue;
       };
       let out_file_name = output_dir.join(&entry_info.name);
-      let _ = self.extract_entry(entry_info, out_file_name)
+      let _ = self
+        .extract_entry(entry_info.clone(), out_file_name)
         .inspect_err(|e| eprintln!("error while extracting: {e}. skipping"));
     }
   }
 
-  pub fn extract_all_files(&self, output_dir: &Path) -> Result<(), String> {
+  pub fn extract_all_files(&self, output_dir: &Path) {
     self.entry_map.clone().into_par_iter().for_each(|(_, entry_info)| {
       if let Err(e) = self.extract_entry(entry_info, output_dir.to_path_buf()) {
         eprintln!("error while extracting: {e}. skipping")
       }
     });
-    Ok(())
   }
 }
 
@@ -265,6 +264,6 @@ pub fn uncompress_archive(
   let blob_path =
     PathBuf::from(archive_path.to_string_lossy().to_string().replace(".s4a.db", ".s4a.blob"));
   let archive_reader = LocalS4ArchiveReader::from(archive_path, &blob_path)?;
-  archive_reader.extract_all_files(output_path)?;
+  archive_reader.extract_all_files(output_path);
   Ok(())
 }
