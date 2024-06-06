@@ -16,8 +16,8 @@ pub fn compress_lzma(file_path: &Path, out_path: &Path) -> Result<u64, String> {
 
 pub fn compress_lzma_in_mem(file_path: &Path) -> Result<Vec<u8>, String> {
   let input_data = fs::read(file_path).map_err(|e| format!("at opening {file_path:?}: {e}"))?;
-  let output_data = lzma::compress(&input_data, 9)
-    .map_err(|e| format!("at compressing {file_path:?}: {e}"))?;
+  let output_data =
+    lzma::compress(&input_data, 9).map_err(|e| format!("at compressing {file_path:?}: {e}"))?;
   Ok(output_data)
 }
 

@@ -2,6 +2,7 @@ mod compress_utils;
 
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
+use std::cmp::max;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -22,6 +23,7 @@ struct WriteThreadInput {
 }
 
 fn writer_loop(
+  write_buffer_size: u64,
   output_name: PathBuf,
   rx: mpsc::Receiver<Option<WriteThreadInput>>,
 ) -> Result<(), String> {
@@ -30,23 +32,22 @@ fn writer_loop(
 
   if output_db.exists() {
     if output_db.is_file() {
-      println!("{:?} already exists replacing it", &output_db);
-      fs::remove_file(&output_db).map_err(|e| format!("error deleting {:?}: {e}", &output_db))?;
+      println!("{:?} at exists replacing it", &output_db);
+      fs::remove_file(&output_db).map_err(|e| format!("at deleting {:?}: {e}", &output_db))?;
     } else {
       return Err(format!("{:?} already exists and is not a file", &output_db));
     }
   }
 
-  let conn = rusqlite::Connection::open_in_memory()
-    .map_err(|e| format!("error creating temp db file: {e}"))?;
+  let conn =
+    rusqlite::Connection::open_in_memory().map_err(|e| format!("at in-mem sql db create: {e}"))?;
   // Create table
   conn
     .execute(
-      "CREATE TABLE entry_list \
-    (name VARCHAR(2048), type VARCHAR(8), offset BIGINT, size BIGINT)",
+      "CREATE TABLE entry_list (name VARCHAR(2048), type VARCHAR(8), offset BIGINT, size BIGINT)",
       [],
     )
-    .map_err(|e| format!("error creating mysql table: {e}"))?;
+    .map_err(|e| format!("at creating mysql table: {e}"))?;
 
   // Prepare SQL insert statement
   let mut insert_row_stmt = conn
@@ -55,22 +56,22 @@ fn writer_loop(
 
   // Writer to output file
   let mut buf_writer = io::BufWriter::with_capacity(
-    128 * 1024,
-    fs::File::create(&output_blob)
-      .map_err(|e| format!("error opening file {:?}: {e}", &output_name))?,
+    max(128 * 1024, write_buffer_size as usize),
+    fs::File::create(&output_blob).map_err(|e| format!("at opening {:?}: {e}", &output_name))?,
   );
 
   let mut offset = 0;
-  let mut sql_inserts = Vec::with_capacity(1000);
   for r_msg in rx {
     if let Some(msg) = r_msg {
       match msg.data {
         WriteThreadData::RawBytes(data) => {
           if let Err(e) = buf_writer.write_all(&data) {
             eprintln!("error writing {:?} to output blob: {e}", &msg.entry_name);
-            continue
+            continue;
           }
-          sql_inserts.push((msg.entry_name.clone(), "FILE", offset, data.len() as u64));
+          let _ = insert_row_stmt
+            .execute((&msg.entry_name, "FILE", offset, data.len() as u64))
+            .inspect_err(|e| eprintln!("error adding {} to index: {e}", &msg.entry_name));
           offset += data.len() as u64;
         }
         WriteThreadData::TempFile(temp_file) => {
@@ -86,35 +87,29 @@ fn writer_loop(
           let write_size = io::copy(&mut buf_reader, &mut buf_writer).unwrap_or(0);
           let _ =
             fs::remove_file(&temp_file).inspect_err(|e| eprintln!("error removing temp file: {e}"));
-          sql_inserts.push((msg.entry_name.clone(), "FILE", offset, write_size));
+          let _ = insert_row_stmt
+            .execute((&msg.entry_name, "FILE", offset, write_size))
+            .inspect_err(|e| eprintln!("error adding {} to index: {e}", &msg.entry_name));
           offset += write_size;
         }
         WriteThreadData::Folder => {
-          sql_inserts.push((msg.entry_name.clone(), "FOLDER", 0u64, 0u64));
-        }
-      }
-      if sql_inserts.len() >= 1000 {
-        for sql_ins in sql_inserts.drain(..) {
           let _ = insert_row_stmt
-            .execute(sql_ins.clone())
-            .inspect_err(|e| eprintln!("error adding {} to index: {e}", &sql_ins.0));
+            .execute((&msg.entry_name, "FOLDER", 0u64, 0u64))
+            .inspect_err(|e| eprintln!("error adding {} to index: {e}", &msg.entry_name));
         }
       }
     } else {
       break;
     }
   }
-  for sql_ins in sql_inserts.drain(..) {
-    let _ = insert_row_stmt
-      .execute(sql_ins.clone())
-      .inspect_err(|e| eprintln!("error adding {} to index: {e}", &sql_ins.0));
-  }
+
   let _ = insert_row_stmt.finalize().map_err(|e| eprintln!("error flushing data to index: {e}"));
   let mut disk_db_conn = rusqlite::Connection::open(&output_db)
     .map_err(|e| format!("error creating temp db file: {e}"))?;
   let db_backup_handle = rusqlite::backup::Backup::new(&conn, &mut disk_db_conn)
     .map_err(|e| format!("error flushing data to index: {e}"))?;
-  db_backup_handle.run_to_completion(5, time::Duration::from_nanos(0), None)
+  db_backup_handle
+    .run_to_completion(5, time::Duration::from_nanos(0), None)
     .map_err(|e| format!("error flushing data to index: {e}"))?;
 
   Ok(())
@@ -124,6 +119,8 @@ pub fn compress_directory(
   dir_path: &Path,
   output_path: &Path,
   num_threads: u32,
+  max_in_mem_file_size: u64,
+  write_buffer_size: u64,
 ) -> Result<(), String> {
   println!("Getting list of entries to archive");
   let entry_list = WalkDir::new(&dir_path)
@@ -146,9 +143,9 @@ pub fn compress_directory(
 
   let (tx, rx) = mpsc::channel();
   let output_path_owned = output_path.to_path_buf();
-  let t_handle = thread::spawn(|| {
-    let _ =
-      writer_loop(output_path_owned, rx).inspect_err(|e| eprintln!("writer thread error: {e}"));
+  let t_handle = thread::spawn(move || {
+    let _ = writer_loop(write_buffer_size, output_path_owned, rx)
+      .inspect_err(|e| eprintln!("writer thread error: {e}"));
   });
 
   t_pool.scope(|s| {
@@ -168,12 +165,15 @@ pub fn compress_directory(
         let tx_thread_owned = tx.clone();
         s.spawn(move |_| {
           let file_len = fs::metadata(entry.path()).map(|x| x.len()).unwrap_or(u64::MAX);
-          if file_len > 8 * 1024 * 1024 {
+          if file_len > max_in_mem_file_size {
             let _ = compress_utils::compress_lzma(entry.path(), &temp_file_path)
               .inspect_err(|e| eprintln!("error compressing {:?}: {e}", entry.path()))
               .map(|_| {
                 let _ = tx_thread_owned
-                  .send(Some(WriteThreadInput { data: WriteThreadData::TempFile(temp_file_path), entry_name }))
+                  .send(Some(WriteThreadInput {
+                    data: WriteThreadData::TempFile(temp_file_path),
+                    entry_name,
+                  }))
                   .inspect_err(|e| {
                     eprintln!("error writing {:?} to archive: {e}", entry.path());
                   });
@@ -183,7 +183,10 @@ pub fn compress_directory(
               .inspect_err(|e| eprintln!("error compressing {:?}: {e}", entry.path()))
               .map(|data| {
                 let _ = tx_thread_owned
-                  .send(Some(WriteThreadInput { data: WriteThreadData::RawBytes(data), entry_name }))
+                  .send(Some(WriteThreadInput {
+                    data: WriteThreadData::RawBytes(data),
+                    entry_name,
+                  }))
                   .inspect_err(|e| {
                     eprintln!("error writing {:?} to archive: {e}", entry.path());
                   });

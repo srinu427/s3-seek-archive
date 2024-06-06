@@ -1,6 +1,6 @@
-use s4_utils::uncompress_archive;
-use s4_utils::compress_directory;
 use clap::{Args, Parser, Subcommand};
+use s4_utils::compress_directory;
+use s4_utils::uncompress_archive;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -30,6 +30,13 @@ struct CompressArgs {
   /// one more thread will be used for IO
   #[arg(long, short = 't', default_value_t = 1)]
   thread_count: u32,
+  /// Max size of file in bytes to be processed in memory instead of writing to temp file.
+  /// Use 0 to reduce RAM usage
+  #[arg(long, short = 'M', default_value_t = 8 * 1024 * 1024)]
+  max_in_mem_file_size: u64,
+  /// Set write buffer size
+  #[arg(long, short = 'W', default_value_t = 32 * 1024 * 1024)]
+  write_buffer_size: u64,
 }
 
 #[derive(Args)]
@@ -55,6 +62,8 @@ fn main() {
         &compress_args.input_path,
         &compress_args.output_path,
         compress_args.thread_count,
+        compress_args.max_in_mem_file_size,
+        compress_args.write_buffer_size
       ) {
         eprintln!("{e}");
       }
