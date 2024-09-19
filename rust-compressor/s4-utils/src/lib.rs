@@ -112,6 +112,32 @@ fn writer_loop(
     .run_to_completion(5, time::Duration::from_nanos(0), None)
     .map_err(|e| format!("error flushing data to index: {e}"))?;
 
+  println!("muxing db and blob");
+  let output_s4a = PathBuf::from(format!("{}.s4a", output_name.to_string_lossy()));
+  let mut s4a_writer = io::BufWriter::with_capacity(
+    max(128 * 1024, write_buffer_size as usize),
+    fs::File::create(&output_s4a).map_err(|e| format!("at opening {:?}: {e}", &output_s4a))?,
+  );
+  let output_db_size = output_db
+    .metadata()
+    .map_err(|e| format!("error getting db file size: {e}"))?
+    .len();
+  s4a_writer.write(&output_db_size.to_le_bytes())
+    .map_err(|e| format!("error writing to s4a file: {e}"))?;
+  let mut output_db_fr = fs::File::open(&output_db)
+    .map_err(|e| format!("error opening {:?}: {e}", &output_db))?;
+  io::copy(&mut output_db_fr, &mut s4a_writer)
+    .map_err(|e| format!("error writing to s4a file: {e}"))?;
+  let mut output_blob_fr = fs::File::open(&output_blob)
+    .map_err(|e| format!("error opening {:?}: {e}", &output_blob))?;
+  io::copy(&mut output_blob_fr, &mut s4a_writer)
+    .map_err(|e| format!("error writing to s4a file: {e}"))?;
+
+  let _ = fs::remove_file(&output_db)
+    .inspect_err(|e| eprintln!("error deleting temp file {:?}: {e}", &output_db));
+  let _ = fs::remove_file(&output_blob)
+    .inspect_err(|e| eprintln!("error deleting temp file {:?}: {e}", &output_blob));
+
   Ok(())
 }
 
