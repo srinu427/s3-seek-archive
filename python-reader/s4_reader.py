@@ -94,10 +94,10 @@ class S4AReaderLocal:
             return uncompressed_data
 
 
-def make_s4a_reader_local(db_path: str):
+def make_s4a_reader_local(s4a_path: str):
     try:
-        entry_map = parse_s4a_db(db_path)
+        entry_map = parse_s4a_db(s4a_path)
     except Exception as e:
-        print(f"error parsing .s4a.db: {e}")
+        print(f"error parsing .s4a: {e}")
         return None
-    return S4AReaderLocal(db_path.replace(".s4a.db", ".s4a.blob"), entry_map)
+    return S4AReaderLocal(s4a_path.replace(".s4a.db", ".s4a.blob"), entry_map)

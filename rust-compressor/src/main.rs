@@ -61,7 +61,7 @@ fn main() {
         &compress_args.output_path,
         compress_args.thread_count,
         compress_args.max_in_mem_file_size,
-        compress_args.write_buffer_size
+        compress_args.write_buffer_size,
       ) {
         eprintln!("{e}");
       }

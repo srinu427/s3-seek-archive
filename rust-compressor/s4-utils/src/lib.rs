@@ -6,6 +6,7 @@ use std::cmp::max;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::{fs, io, thread, time};
@@ -27,24 +28,19 @@ fn writer_loop(
   output_name: PathBuf,
   rx: mpsc::Receiver<Option<WriteThreadInput>>,
 ) -> Result<(), String> {
-  let output_blob = PathBuf::from(format!("{}.s4a.blob", output_name.to_string_lossy()));
-  let output_db = PathBuf::from(format!("{}.s4a.db", output_name.to_string_lossy()));
-
-  if output_db.exists() {
-    if output_db.is_file() {
-      println!("{:?} at exists replacing it", &output_db);
-      fs::remove_file(&output_db).map_err(|e| format!("at deleting {:?}: {e}", &output_db))?;
-    } else {
-      return Err(format!("{:?} already exists and is not a file", &output_db));
-    }
-  }
+  let output_blob = PathBuf::from(format!("{}.blob", output_name.to_string_lossy()));
 
   let conn =
     rusqlite::Connection::open_in_memory().map_err(|e| format!("at in-mem sql db create: {e}"))?;
   // Create table
   conn
     .execute(
-      "CREATE TABLE entry_list (name VARCHAR(2048), type VARCHAR(8), offset BIGINT, size BIGINT)",
+      "CREATE TABLE entry_list (
+        name VARCHAR(2048),
+        type VARCHAR(8),
+        offset BIGINT,
+        size BIGINT
+      )",
       [],
     )
     .map_err(|e| format!("at creating mysql table: {e}"))?;
@@ -84,7 +80,9 @@ fn writer_loop(
             continue;
           };
           let mut buf_reader = io::BufReader::with_capacity(128 * 1024, fr);
-          let write_size = io::copy(&mut buf_reader, &mut buf_writer).unwrap_or(0);
+          let write_size = io::copy(&mut buf_reader, &mut buf_writer)
+            .inspect_err(|e| eprintln!("error writing to blob file: {e}"))
+            .unwrap_or(0);
           let _ =
             fs::remove_file(&temp_file).inspect_err(|e| eprintln!("error removing temp file: {e}"));
           let _ = insert_row_stmt
@@ -104,40 +102,46 @@ fn writer_loop(
   }
 
   let _ = insert_row_stmt.finalize().map_err(|e| eprintln!("error flushing data to index: {e}"));
-  let mut disk_db_conn = rusqlite::Connection::open(&output_db)
-    .map_err(|e| format!("error creating temp db file: {e}"))?;
+  buf_writer.flush().map_err(|e| format!("error flushing data to blob: {e}"))?;
+
+  // Dump sqlite db to file
+  let output_db = PathBuf::from(format!("{}.db", output_name.to_string_lossy()));
+  let mut disk_db_conn =
+    rusqlite::Connection::open(&output_db).map_err(|e| format!("at creating temp db file: {e}"))?;
   let db_backup_handle = rusqlite::backup::Backup::new(&conn, &mut disk_db_conn)
-    .map_err(|e| format!("error flushing data to index: {e}"))?;
+    .map_err(|e| format!("at flushing data to index: {e}"))?;
   db_backup_handle
     .run_to_completion(5, time::Duration::from_nanos(0), None)
-    .map_err(|e| format!("error flushing data to index: {e}"))?;
+    .map_err(|e| format!("at flushing data to index: {e}"))?;
+
+  // compress sqlite db file
+  let output_db_lz = PathBuf::from(format!("{}.db.xz", output_name.to_string_lossy()));
+  compress_utils::compress_lzma(&output_db, &output_db_lz)
+    .map_err(|e| format!("at compressing db file: {e}"))?;
 
   println!("muxing db and blob");
-  let output_s4a = PathBuf::from(format!("{}.s4a", output_name.to_string_lossy()));
-  let mut s4a_writer = io::BufWriter::with_capacity(
-    max(128 * 1024, write_buffer_size as usize),
-    fs::File::create(&output_s4a).map_err(|e| format!("at opening {:?}: {e}", &output_s4a))?,
-  );
-  let output_db_size = output_db
-    .metadata()
-    .map_err(|e| format!("error getting db file size: {e}"))?
-    .len();
-  s4a_writer.write(&output_db_size.to_le_bytes())
-    .map_err(|e| format!("error writing to s4a file: {e}"))?;
-  let mut output_db_fr = fs::File::open(&output_db)
-    .map_err(|e| format!("error opening {:?}: {e}", &output_db))?;
+  let mut s4a_writer =
+    fs::File::create(&output_name).map_err(|e| format!("at opening {:?}: {e}", &output_name))?;
+  let output_db_size =
+    output_db_lz.metadata().map_err(|e| format!("at getting db file size: {e}"))?.len();
+  s4a_writer
+    .write(&output_db_size.to_le_bytes())
+    .map_err(|e| format!("at writing db size to s4a file: {e}"))?;
+  let mut output_db_fr =
+    fs::File::open(&output_db_lz).map_err(|e| format!("at opening {:?}: {e}", &output_db_lz))?;
   io::copy(&mut output_db_fr, &mut s4a_writer)
-    .map_err(|e| format!("error writing to s4a file: {e}"))?;
-  let mut output_blob_fr = fs::File::open(&output_blob)
-    .map_err(|e| format!("error opening {:?}: {e}", &output_blob))?;
+    .map_err(|e| format!("at writing to s4a file: {e}"))?;
+  let mut output_blob_fr =
+    fs::File::open(&output_blob).map_err(|e| format!("at opening {:?}: {e}", &output_blob))?;
   io::copy(&mut output_blob_fr, &mut s4a_writer)
-    .map_err(|e| format!("error writing to s4a file: {e}"))?;
+    .map_err(|e| format!("at writing blob to s4a file: {e}"))?;
 
+  let _ = fs::remove_file(&output_db_lz)
+    .inspect_err(|e| eprintln!("at deleting temp file {:?}: {e}", &output_db_lz));
   let _ = fs::remove_file(&output_db)
-    .inspect_err(|e| eprintln!("error deleting temp file {:?}: {e}", &output_db));
+    .inspect_err(|e| eprintln!("at deleting temp file {:?}: {e}", &output_db));
   let _ = fs::remove_file(&output_blob)
-    .inspect_err(|e| eprintln!("error deleting temp file {:?}: {e}", &output_blob));
-
+    .inspect_err(|e| eprintln!("at deleting temp file {:?}: {e}", &output_blob));
   Ok(())
 }
 
@@ -157,9 +161,9 @@ pub fn compress_directory(
     .collect::<Vec<_>>();
   println!("{} entries to be archived", entry_list.len());
 
-  let tmp_dir_path =
-    PathBuf::from(format!("{}_tmp_{}", output_path.with_file_name("s4a_temp").display(), 0));
-  fs::create_dir_all(&tmp_dir_path).map_err(|e| format!("error creating temp dir: {e}"))?;
+  let tmp_dir =
+    tempfile::tempdir().map_err(|e| format!("at creating temp dir for compression: {e}"))?;
+  let tmp_dir_path = tmp_dir.path();
 
   // Thread pool
   let t_pool = rayon::ThreadPoolBuilder::new()
@@ -270,13 +274,29 @@ impl S4ArchiveEntryDetails {
 
 pub struct LocalS4ArchiveReader {
   entry_map: HashMap<String, S4ArchiveEntryDetails>,
-  blob_path: PathBuf,
+  archive_path: PathBuf,
+  blob_offset: u64,
 }
 
 impl LocalS4ArchiveReader {
-  pub fn from(header: &Path, blob: &Path) -> Result<Self, String> {
-    let entry_map = S4ArchiveEntryDetails::parse_header(header)?;
-    Ok(Self { entry_map, blob_path: blob.to_path_buf() })
+  pub fn from(archive_path: &Path) -> Result<Self, String> {
+    let mut fr = fs::File::open(archive_path)
+      .map_err(|e| format!("at opening archive {:?}: {e}", archive_path))?;
+    let mut header_size_bytes = [0u8; 8];
+    fr.read_exact(&mut header_size_bytes).map_err(|e| format!("at reading header size: {e}"))?;
+    let header_size = u64::from_le_bytes(header_size_bytes);
+    let mut header_bytes = vec![0u8; header_size as usize];
+    fr.read_exact_at(&mut header_bytes, 8).map_err(|e| format!("at reading header bytes: {e}"))?;
+    let header_bytes_uncompressed =
+      lzma::decompress(&header_bytes).map_err(|e| format!("at extracting header bytes: {e}"))?;
+    let temp_dir = tempfile::tempdir().map_err(|e| format!("at tmp dir create: {e}"))?;
+    let temp_header_file = temp_dir.path().join("header_db.db");
+    let mut fw = fs::File::create(&temp_header_file)
+      .map_err(|e| format!("at creating tmp header file: {e}"))?;
+    fw.write(&header_bytes_uncompressed)
+      .map_err(|e| format!("at writing header bytes to temp file: {e}"))?;
+    let entry_map = S4ArchiveEntryDetails::parse_header(&temp_header_file)?;
+    Ok(Self { entry_map, archive_path: archive_path.to_path_buf(), blob_offset: header_size + 8 })
   }
 
   fn extract_entry(
@@ -287,14 +307,14 @@ impl LocalS4ArchiveReader {
     let out_file_name = output_dir.join(&entry_info.name);
     if entry_info._type == "FILE" {
       out_file_name.parent().map(fs::create_dir_all);
-      let fr = fs::File::open(&self.blob_path).map_err(|e| format!("at opening blob: {e}"))?;
+      let fr = fs::File::open(&self.archive_path).map_err(|e| format!("at opening blob: {e}"))?;
       let mut reader = io::BufReader::with_capacity(128 * 1024, fr);
       let fw = fs::File::create(&out_file_name)
         .map_err(|e| format!("at opening {:?}: {e}", &out_file_name))?;
       let mut writer =
         lzma::LzmaWriter::new_decompressor(fw).map_err(|e| format!("at decompressor init: {e}"))?;
       reader
-        .seek(SeekFrom::Start(entry_info.offset))
+        .seek(SeekFrom::Start(self.blob_offset + entry_info.offset))
         .map_err(|e| format!("at seeking in blob file: {e}"))?;
       let mut chunk_reader = reader.take(entry_info.size);
       io::copy(&mut chunk_reader, &mut writer).map_err(|e| format!("at decompressing: {e}"))?;
@@ -335,9 +355,7 @@ pub fn uncompress_archive(
   output_path: &Path,
   _num_threads: u32,
 ) -> Result<(), String> {
-  let blob_path =
-    PathBuf::from(archive_path.to_string_lossy().to_string().replace(".s4a.db", ".s4a.blob"));
-  let archive_reader = LocalS4ArchiveReader::from(archive_path, &blob_path)?;
+  let archive_reader = LocalS4ArchiveReader::from(archive_path)?;
   archive_reader.extract_all_files(output_path);
   Ok(())
 }
