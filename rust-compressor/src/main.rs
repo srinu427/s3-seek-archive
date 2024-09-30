@@ -22,8 +22,8 @@ struct CompressArgs {
   /// Input directory name. If a file is provided, empty archive is generated
   #[arg(long, short = 'i')]
   input_path: PathBuf,
-  /// Compress Mode: Output files' name.
-  /// A data file <output_name>.s4a.blob and sqlite index <output_name>.s4a.db will be generated.
+  /// Compress Mode: Output file's name.
+  /// An s4a file <output_name>.s4a will be generated.
   #[arg(long, short = 'o')]
   output_path: PathBuf,
   /// Number of files to compress in parallel (excluding the main thread).
@@ -41,15 +41,13 @@ struct CompressArgs {
 
 #[derive(Args)]
 struct UncompressArgs {
-  /// Input s4a.db file name
-  ///
-  /// Program expects a ".s4a.db" extension and ".s4a.blob" file to be in the same directory
+  /// Input s4a file name
   #[arg(long, short = 'i')]
   input_path: PathBuf,
   /// Uncompress Mode: Output directory name
   #[arg(long, short = 'o')]
   output_path: PathBuf,
-  /// Number of files to uncompress in parallel (excluding the main thread).
+  /// NOTE: currently ignored. Number of files to uncompress in parallel (excluding the main thread).
   #[arg(long, short = 't', default_value_t = 1)]
   thread_count: u32,
 }

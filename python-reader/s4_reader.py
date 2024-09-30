@@ -1,7 +1,7 @@
 import lzma
 import sqlite3
 import tempfile
-from typing import Any
+from typing import Any, Dict
 
 from dataclasses import dataclass
 
@@ -31,7 +31,7 @@ class S4AReaderS3:
     s3_client: Any
     bucket_name: str
     blob_key_name: str
-    entry_map: dict[str, S4AEntryMetadata]
+    entry_map: Dict[str, S4AEntryMetadata]
 
     def get_file(self, name: str):
         if name in self.entry_map:
@@ -74,7 +74,7 @@ def make_s4a_reader_s3(s3_client: Any, bucket_name: str, object_name: str):
 @dataclass
 class S4AReaderLocal:
     blob_path: str
-    entry_map: dict[str, S4AEntryMetadata]
+    entry_map: Dict[str, S4AEntryMetadata]
 
     def get_file(self, name: str):
         if name in self.entry_map:

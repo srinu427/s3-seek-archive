@@ -333,7 +333,7 @@ impl LocalS4ArchiveReader {
 pub fn uncompress_archive(
   archive_path: &Path,
   output_path: &Path,
-  num_threads: u32,
+  _num_threads: u32,
 ) -> Result<(), String> {
   let blob_path =
     PathBuf::from(archive_path.to_string_lossy().to_string().replace(".s4a.db", ".s4a.blob"));

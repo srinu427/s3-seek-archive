@@ -21,7 +21,7 @@ pub fn compress_lzma_in_mem(file_path: &Path) -> Result<Vec<u8>, String> {
   Ok(output_data)
 }
 
-pub fn uncompress_lzma(file_path: &Path, out_path: &Path) -> Result<u64, String> {
+pub fn _uncompress_lzma(file_path: &Path, out_path: &Path) -> Result<u64, String> {
   let fr = fs::File::open(out_path).map_err(|e| format!("at opening {file_path:?}: {e}"))?;
   let fw = fs::File::create(out_path).map_err(|e| format!("at opening {out_path:?}: {e}"))?;
   let mut lzma_reader = lzma::LzmaReader::new_decompressor(fr)
