@@ -127,7 +127,7 @@ fn writer_loop(
   let output_db_size =
     output_db_lz.metadata().map_err(|e| format!("at getting db file size: {e}"))?.len();
   s4a_writer
-    .write(&output_db_size.to_le_bytes())
+    .write(&output_db_size.to_be_bytes())
     .map_err(|e| format!("at writing db size to s4a file: {e}"))?;
   let mut output_db_fr =
     fs::File::open(&output_db_lz).map_err(|e| format!("at opening {:?}: {e}", &output_db_lz))?;
@@ -296,7 +296,7 @@ impl LocalS4ArchiveReader {
       .map_err(|e| format!("at opening archive {:?}: {e}", archive_path))?;
     let mut header_size_bytes = [0u8; 8];
     fr.read_exact(&mut header_size_bytes).map_err(|e| format!("at reading header size: {e}"))?;
-    let header_size = u64::from_le_bytes(header_size_bytes);
+    let header_size = u64::from_be_bytes(header_size_bytes);
     let mut header_bytes = vec![0u8; header_size as usize];
     fr.read_exact_at(&mut header_bytes, 8).map_err(|e| format!("at reading header bytes: {e}"))?;
     let header_bytes_uncompressed = compress_utils::decompress_from_mem(&header_bytes, CompressionType::LZMA)

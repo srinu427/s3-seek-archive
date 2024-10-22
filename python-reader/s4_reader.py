@@ -66,14 +66,14 @@ def make_s4a_reader_s3(s3_client: Any, bucket_name: str, object_name: str):
     except Exception as e:
         print(f"ERROR reading {object_name} in {bucket_name} from S3: {e}")
         return None
-    db_size_int = int.from_bytes(db_size, byteorder='little')
+    db_size_int = int.from_bytes(db_size, byteorder='big')
     try:
         s3_get_db_data = s3_client.get_object(
             Bucket=bucket_name,
             Key=object_name,
             Range=f"bytes=8-{db_size_int - 1}"
         )
-        db_data = s3_get_db_size['Body'].read()
+        db_data = s3_get_db_data['Body'].read()
     except Exception as e:
         print(f"ERROR reading {object_name} in {bucket_name} from S3: {e}")
         return None
@@ -120,7 +120,7 @@ def make_s4a_reader_local(s4a_path: str):
         return None
     with fr:
         db_size.extend(fr.read(8))
-        db_size_int = int.from_bytes(db_size, byteorder='little')
+        db_size_int = int.from_bytes(db_size, byteorder='big')
         db_data = fr.read(db_size_int)
         db_data_uncompressed = lzma.decompress(db_data)
         tempfile_obj = tempfile.NamedTemporaryFile()
