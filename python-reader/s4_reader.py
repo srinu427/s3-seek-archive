@@ -31,6 +31,7 @@ class S4AReaderS3:
     s3_client: Any
     bucket_name: str
     blob_key_name: str
+    blob_offset: int
     entry_map: Dict[str, S4AEntryMetadata]
 
     def get_file(self, name: str):
@@ -56,24 +57,40 @@ class S4AReaderS3:
 
 def make_s4a_reader_s3(s3_client: Any, bucket_name: str, object_name: str):
     try:
-        s3_get_resp = s3_client.get_object(Bucket=bucket_name, Key=object_name)
-        s3_object_data = s3_get_resp['Body'].read()
+        s3_get_db_size = s3_client.get_object(
+            Bucket=bucket_name,
+            Key=object_name,
+            Range=f"bytes=0-7"
+        )
+        db_size = s3_get_db_size['Body'].read()
+    except Exception as e:
+        print(f"ERROR reading {object_name} in {bucket_name} from S3: {e}")
+        return None
+    db_size_int = int.from_bytes(db_size, byteorder='little')
+    try:
+        s3_get_db_data = s3_client.get_object(
+            Bucket=bucket_name,
+            Key=object_name,
+            Range=f"bytes=8-{db_size_int - 1}"
+        )
+        db_data = s3_get_db_size['Body'].read()
     except Exception as e:
         print(f"ERROR reading {object_name} in {bucket_name} from S3: {e}")
         return None
     temp_file = tempfile.NamedTemporaryFile()
-    temp_file.write(s3_object_data)
+    temp_file.write(db_data)
     try:
         entry_map = parse_s4a_db(temp_file.name)
     except Exception as e:
         print(f"error parsing .s4a.db: {e}")
         return None
-    return S4AReaderS3(s3_client, bucket_name, object_name.replace(".s4a.db", ".s4a.blob"), entry_map)
+    return S4AReaderS3(s3_client, bucket_name, object_name, entry_map)
 
 
 @dataclass
 class S4AReaderLocal:
     blob_path: str
+    blob_offset: int
     entry_map: Dict[str, S4AEntryMetadata]
 
     def get_file(self, name: str):
@@ -81,7 +98,7 @@ class S4AReaderLocal:
             entry_info = self.entry_map[name]
             try:
                 with open(self.blob_path, 'rb') as fr:
-                    fr.seek(entry_info.offset)
+                    fr.seek(entry_info.offset + self.blob_offset)
                     compressed_data = fr.read(entry_info.size)
             except Exception as e:
                 print(f"error getting file from blob: {e}")
@@ -95,9 +112,28 @@ class S4AReaderLocal:
 
 
 def make_s4a_reader_local(s4a_path: str):
+    db_size = bytearray()
     try:
-        entry_map = parse_s4a_db(s4a_path)
+        fr = open(s4a_path, 'rb')
+    except Exception as e:
+        print(f"error opening .s4a: {e}")
+        return None
+    with fr:
+        db_size.extend(fr.read(8))
+        db_size_int = int.from_bytes(db_size, byteorder='little')
+        db_data = fr.read(db_size_int)
+        db_data_uncompressed = lzma.decompress(db_data)
+        tempfile_obj = tempfile.NamedTemporaryFile()
+        tempfile_obj.write(db_data_uncompressed)
+
+    try:  
+        entry_map = parse_s4a_db(tempfile_obj.name)
     except Exception as e:
         print(f"error parsing .s4a: {e}")
         return None
-    return S4AReaderLocal(s4a_path.replace(".s4a.db", ".s4a.blob"), entry_map)
+    return S4AReaderLocal(s4a_path, db_size_int + 8, entry_map)
+
+if __name__ == "__main__":
+    reader = make_s4a_reader_local("/Users/sadigopu/RustroverProjects/s3-seek-archive/rust-compressor/target_archive.s4a")
+    print(reader.entry_map)
+    pass
