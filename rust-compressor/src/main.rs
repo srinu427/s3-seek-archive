@@ -1,7 +1,9 @@
 use clap::{Args, Parser, Subcommand};
 use s4_utils::compress_directory;
 use s4_utils::uncompress_archive;
+use s4_utils::CompressionType;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -30,6 +32,10 @@ struct CompressArgs {
   /// one more thread will be used for IO
   #[arg(long, short = 't', default_value_t = 1)]
   thread_count: u32,
+  /// Number of files to compress in parallel (excluding the main thread).
+  /// one more thread will be used for IO
+  #[arg(long, short = 'c', default_value_t = String::from("LZ4"))]
+  compression: String,
   /// Max size of file in bytes to be processed in memory instead of writing to temp file.
   /// Use 0 to reduce RAM usage
   #[arg(long, short = 'M', default_value_t = 8 * 1024 * 1024)]
@@ -60,6 +66,7 @@ fn main() {
         &compress_args.input_path,
         &compress_args.output_path,
         compress_args.thread_count,
+        CompressionType::from_str(&compress_args.compression).expect("shouldn't happen"),
         compress_args.max_in_mem_file_size,
         compress_args.write_buffer_size,
       ) {

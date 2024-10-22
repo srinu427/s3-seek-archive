@@ -1,5 +1,6 @@
 mod compress_utils;
 
+pub use compress_utils::CompressionType;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::cmp::max;
@@ -8,6 +9,7 @@ use std::fmt::Debug;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::mpsc;
 use std::{fs, io, thread, time};
 use walkdir::WalkDir;
@@ -20,6 +22,7 @@ enum WriteThreadData {
 
 struct WriteThreadInput {
   data: WriteThreadData,
+  compression: CompressionType,
   entry_name: String,
 }
 
@@ -39,7 +42,8 @@ fn writer_loop(
         name VARCHAR(2048),
         type VARCHAR(8),
         offset BIGINT,
-        size BIGINT
+        size BIGINT,
+        compression VARCHAR(8)
       )",
       [],
     )
@@ -47,7 +51,8 @@ fn writer_loop(
 
   // Prepare SQL insert statement
   let mut insert_row_stmt = conn
-    .prepare("INSERT INTO entry_list (name, type, offset, size) VALUES (?1, ?2, ?3, ?4)")
+    .prepare("INSERT INTO entry_list 
+      (name, type, offset, size, compression) VALUES (?1, ?2, ?3, ?4, ?5)")
     .map_err(|e| format!("error preparing insert statement: {e}"))?;
 
   // Writer to output file
@@ -58,46 +63,43 @@ fn writer_loop(
 
   let mut offset = 0;
   for r_msg in rx {
-    if let Some(msg) = r_msg {
-      match msg.data {
-        WriteThreadData::RawBytes(data) => {
-          if let Err(e) = buf_writer.write_all(&data) {
-            eprintln!("error writing {:?} to output blob: {e}", &msg.entry_name);
-            continue;
-          }
-          let _ = insert_row_stmt
-            .execute((&msg.entry_name, "FILE", offset, data.len() as u64))
-            .inspect_err(|e| eprintln!("error adding {} to index: {e}", &msg.entry_name));
-          offset += data.len() as u64;
+    let Some(msg) = r_msg else { break };
+    match msg.data {
+      WriteThreadData::RawBytes(data) => {
+        if let Err(e) = buf_writer.write_all(&data) {
+          eprintln!("error writing {:?} to output blob: {e}", &msg.entry_name);
+          continue;
         }
-        WriteThreadData::TempFile(temp_file) => {
-          let Ok(fr) = fs::File::open(&temp_file).inspect_err(|e| {
-            eprintln!(
-              "can't open temp file {:?}: {e}. externally modified?. skipping it",
-              &temp_file
-            )
-          }) else {
-            continue;
-          };
-          let mut buf_reader = io::BufReader::with_capacity(128 * 1024, fr);
-          let write_size = io::copy(&mut buf_reader, &mut buf_writer)
-            .inspect_err(|e| eprintln!("error writing to blob file: {e}"))
-            .unwrap_or(0);
-          let _ =
-            fs::remove_file(&temp_file).inspect_err(|e| eprintln!("error removing temp file: {e}"));
-          let _ = insert_row_stmt
-            .execute((&msg.entry_name, "FILE", offset, write_size))
-            .inspect_err(|e| eprintln!("error adding {} to index: {e}", &msg.entry_name));
-          offset += write_size;
-        }
-        WriteThreadData::Folder => {
-          let _ = insert_row_stmt
-            .execute((&msg.entry_name, "FOLDER", 0u64, 0u64))
-            .inspect_err(|e| eprintln!("error adding {} to index: {e}", &msg.entry_name));
-        }
+        let _ = insert_row_stmt
+          .execute((&msg.entry_name, "FILE", offset, data.len() as u64, msg.compression.to_string()))
+          .inspect_err(|e| eprintln!("error adding {} to index: {e}", &msg.entry_name));
+        offset += data.len() as u64;
       }
-    } else {
-      break;
+      WriteThreadData::TempFile(temp_file) => {
+        let Ok(fr) = fs::File::open(&temp_file).inspect_err(|e| {
+          eprintln!(
+            "can't open temp file {:?}: {e}. externally modified?. skipping it",
+            &temp_file
+          )
+        }) else {
+          continue;
+        };
+        let mut buf_reader = io::BufReader::with_capacity(128 * 1024, fr);
+        let write_size = io::copy(&mut buf_reader, &mut buf_writer)
+          .inspect_err(|e| eprintln!("error writing to blob file: {e}"))
+          .unwrap_or(0);
+        let _ =
+          fs::remove_file(&temp_file).inspect_err(|e| eprintln!("error removing temp file: {e}"));
+        let _ = insert_row_stmt
+          .execute((&msg.entry_name, "FILE", offset, write_size, msg.compression.to_string()))
+          .inspect_err(|e| eprintln!("error adding {} to index: {e}", &msg.entry_name));
+        offset += write_size;
+      }
+      WriteThreadData::Folder => {
+        let _ = insert_row_stmt
+          .execute((&msg.entry_name, "FOLDER", 0u64, 0u64, msg.compression.to_string()))
+          .inspect_err(|e| eprintln!("error adding {} to index: {e}", &msg.entry_name));
+      }
     }
   }
 
@@ -116,7 +118,7 @@ fn writer_loop(
 
   // compress sqlite db file
   let output_db_lz = PathBuf::from(format!("{}.db.xz", output_name.to_string_lossy()));
-  compress_utils::compress_lzma(&output_db, &output_db_lz)
+  compress_utils::compress(&output_db, &output_db_lz, CompressionType::LZMA)
     .map_err(|e| format!("at compressing db file: {e}"))?;
 
   println!("muxing db and blob");
@@ -149,6 +151,7 @@ pub fn compress_directory(
   dir_path: &Path,
   output_path: &Path,
   num_threads: u32,
+  compression: CompressionType,
   max_in_mem_file_size: u64,
   write_buffer_size: u64,
 ) -> Result<(), String> {
@@ -196,12 +199,13 @@ pub fn compress_directory(
         s.spawn(move |_| {
           let file_len = fs::metadata(entry.path()).map(|x| x.len()).unwrap_or(u64::MAX);
           if file_len > max_in_mem_file_size {
-            let _ = compress_utils::compress_lzma(entry.path(), &temp_file_path)
+            let _ = compress_utils::compress(entry.path(), &temp_file_path, compression)
               .inspect_err(|e| eprintln!("error compressing {:?}: {e}", entry.path()))
               .map(|_| {
                 let _ = tx_thread_owned
                   .send(Some(WriteThreadInput {
                     data: WriteThreadData::TempFile(temp_file_path),
+                    compression,
                     entry_name,
                   }))
                   .inspect_err(|e| {
@@ -209,12 +213,13 @@ pub fn compress_directory(
                   });
               });
           } else {
-            let _ = compress_utils::compress_lzma_in_mem(entry.path())
+            let _ = compress_utils::compress_in_mem(entry.path(), CompressionType::LZMA)
               .inspect_err(|e| eprintln!("error compressing {:?}: {e}", entry.path()))
               .map(|data| {
                 let _ = tx_thread_owned
                   .send(Some(WriteThreadInput {
                     data: WriteThreadData::RawBytes(data),
+                    compression,
                     entry_name,
                   }))
                   .inspect_err(|e| {
@@ -225,7 +230,11 @@ pub fn compress_directory(
         });
       } else if entry.path().is_dir() {
         let _ = tx
-          .send(Some(WriteThreadInput { data: WriteThreadData::Folder, entry_name }))
+          .send(Some(WriteThreadInput {
+            data: WriteThreadData::Folder,
+            compression,
+            entry_name,
+          }))
           .inspect_err(|e| eprintln!("error writing {:?} to archive: {e}", entry.path()));
       }
     }
@@ -244,6 +253,7 @@ pub struct S4ArchiveEntryDetails {
   _type: String,
   offset: u64,
   size: u64,
+  compression: CompressionType,
 }
 
 impl S4ArchiveEntryDetails {
@@ -253,7 +263,7 @@ impl S4ArchiveEntryDetails {
     let conn = rusqlite::Connection::open(header_file)
       .map_err(|e| format!("error opening db file {header_file:?}: {e}"))?;
     let mut entry_query = conn
-      .prepare("SELECT name, type, offset, size FROM entry_list")
+      .prepare("SELECT name, type, offset, size, compression FROM entry_list")
       .map_err(|e| format!("sql query mistake: {e}"))?;
     let entry_map = entry_query
       .query_map([], |row| {
@@ -262,6 +272,8 @@ impl S4ArchiveEntryDetails {
           _type: row.get(1)?,
           offset: row.get(2)?,
           size: row.get(3)?,
+          compression: CompressionType::from_str(&row.get::<usize, String>(4)?)
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
         })
       })
       .map_err(|e| format!("iterating through header failed: {e}"))?
@@ -287,8 +299,8 @@ impl LocalS4ArchiveReader {
     let header_size = u64::from_le_bytes(header_size_bytes);
     let mut header_bytes = vec![0u8; header_size as usize];
     fr.read_exact_at(&mut header_bytes, 8).map_err(|e| format!("at reading header bytes: {e}"))?;
-    let header_bytes_uncompressed =
-      lzma::decompress(&header_bytes).map_err(|e| format!("at extracting header bytes: {e}"))?;
+    let header_bytes_uncompressed = compress_utils::decompress_from_mem(&header_bytes, CompressionType::LZMA)
+      .map_err(|e| format!("at extracting header bytes: {e}"))?;
     let temp_dir = tempfile::tempdir().map_err(|e| format!("at tmp dir create: {e}"))?;
     let temp_header_file = temp_dir.path().join("header_db.db");
     let mut fw = fs::File::create(&temp_header_file)
@@ -309,15 +321,14 @@ impl LocalS4ArchiveReader {
       out_file_name.parent().map(fs::create_dir_all);
       let fr = fs::File::open(&self.archive_path).map_err(|e| format!("at opening blob: {e}"))?;
       let mut reader = io::BufReader::with_capacity(128 * 1024, fr);
-      let fw = fs::File::create(&out_file_name)
+      let mut fw = fs::File::create(&out_file_name)
         .map_err(|e| format!("at opening {:?}: {e}", &out_file_name))?;
-      let mut writer =
-        lzma::LzmaWriter::new_decompressor(fw).map_err(|e| format!("at decompressor init: {e}"))?;
       reader
         .seek(SeekFrom::Start(self.blob_offset + entry_info.offset))
         .map_err(|e| format!("at seeking in blob file: {e}"))?;
-      let mut chunk_reader = reader.take(entry_info.size);
-      io::copy(&mut chunk_reader, &mut writer).map_err(|e| format!("at decompressing: {e}"))?;
+      let chunk_reader = reader.take(entry_info.size);
+      compress_utils::decompress_stream(chunk_reader, &mut fw, entry_info.compression)
+        .map_err(|e| format!("at decompressing {:?}: {e}", &output_dir))?;
       Ok(())
     } else if entry_info._type == "FOLDER" {
       let _ = fs::create_dir_all(&out_file_name)

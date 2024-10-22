@@ -10,3 +10,4 @@ rusqlite = { version = "0.31.0", features = ["bundled", "backup"] }
 rust-lzma = "0.6.0"
 rayon = { version = "1.10.0" }
 tempfile = { version = "3.13.0" }
+lz4_flex = "0.11.3"
