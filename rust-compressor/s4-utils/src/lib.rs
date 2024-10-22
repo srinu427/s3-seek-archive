@@ -164,6 +164,7 @@ pub fn compress_directory(
   max_in_mem_file_size: u64,
   write_buffer_size: u64,
 ) -> Result<(), String> {
+  let list_file_start_time = std::time::Instant::now();
   println!("Getting list of entries to archive");
   let entry_list = WalkDir::new(&dir_path)
     .into_iter()
@@ -171,6 +172,8 @@ pub fn compress_directory(
       r_dir_entry.inspect_err(|e| eprintln!("error reading entry: {e}. skipping it")).ok()
     })
     .collect::<Vec<_>>();
+  let list_file_end_time = std::time::Instant::now();
+  println!("List file time: {:.2}s", (list_file_end_time - list_file_start_time).as_secs_f32());
   println!("{} entries to be archived", entry_list.len());
 
   let tmp_dir =
