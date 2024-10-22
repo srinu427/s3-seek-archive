@@ -100,7 +100,8 @@ pub fn decompress(file_path: &Path, out_path: &Path, compression: CompressionTyp
         .map_err(|e| format!("at initializing lzma un-compressor: {e}"))?;
       let out_size = io::copy(&mut lzma_reader, &mut buf_writer)
         .map_err(|e| format!("at un-compressing {file_path:?}: {e}"))?;
-      buf_writer.flush()
+      buf_writer
+        .flush()
         .map_err(|e| format!("at flushing to {out_path:?}: {e}"))?;
       out_size
     },
@@ -108,7 +109,8 @@ pub fn decompress(file_path: &Path, out_path: &Path, compression: CompressionTyp
       let mut lz4_reader = lz4_flex::frame::FrameDecoder::new(fr);
       let out_size = io::copy(&mut lz4_reader, &mut buf_writer)
         .map_err(|e| format!("at un-compressing {file_path:?}: {e}"))?;
-      buf_writer.flush()
+      buf_writer
+        .flush()
         .map_err(|e| format!("at flushing to {out_path:?}: {e}"))?;
       out_size
     },
@@ -123,7 +125,8 @@ pub fn decompress_stream<R: io::Read, W: io::Write>(inp: R, out: &mut W, compres
         .map_err(|e| format!("at initializing lzma un-compressor: {e}"))?;
       let out_size = io::copy(&mut lzma_reader, out)
         .map_err(|e| format!("at un-compressing stream: {e}"))?;
-      out.flush()
+      out
+        .flush()
         .map_err(|e| format!("at flushing stream: {e}"))?;
       out_size
     },
@@ -131,7 +134,8 @@ pub fn decompress_stream<R: io::Read, W: io::Write>(inp: R, out: &mut W, compres
       let mut lz4_reader = lz4_flex::frame::FrameDecoder::new(inp);
       let out_size = io::copy(&mut lz4_reader, out)
         .map_err(|e| format!("at un-compressing stream: {e}"))?;
-      out.flush()
+      out
+        .flush()
         .map_err(|e| format!("at flushing to stream: {e}"))?;
       out_size
     },
@@ -147,7 +151,8 @@ pub fn decompress_from_mem(compressed_data: &[u8], compression: CompressionType)
     CompressionType::LZ4 => {
       let mut lz4_reader = lz4_flex::frame::FrameDecoder::new(compressed_data);
       let mut decompressed_data = vec![];
-      lz4_reader.read_to_end(&mut decompressed_data)
+      lz4_reader
+        .read_to_end(&mut decompressed_data)
         .map_err(|e| format!("at decompressing: {e}"))?;
       decompressed_data
     },

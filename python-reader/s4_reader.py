@@ -1,3 +1,4 @@
+from enum import Enum
 import lzma
 import sqlite3
 import tempfile
@@ -6,21 +7,27 @@ from typing import Any, Dict
 from dataclasses import dataclass
 
 
+class CompressionType(Enum):
+    LZMA = "LZMA"
+    LZ4 = "LZ4"
+
+
 @dataclass
 class S4AEntryMetadata:
     name: str
     _type: str
     offset: int
     size: int
+    compresssion: str
 
 
 def parse_s4a_db(db_file):
     try:
         conn = sqlite3.Connection(db_file)
         cur = conn.cursor()
-        res_iter = cur.execute("SELECT name, type, offset, size FROM entry_list")
+        res_iter = cur.execute("SELECT name, type, offset, size, compression FROM entry_list")
         entry_list = res_iter.fetchall()
-        return {x[0]: S4AEntryMetadata(x[0], x[1], x[2], x[3]) for x in entry_list}
+        return {x[0]: S4AEntryMetadata(x[0], x[1], x[2], x[3], x[4]) for x in entry_list}
     except Exception as e:
         print(f"error parsing s4a db: {e}")
         return None
@@ -126,7 +133,7 @@ def make_s4a_reader_local(s4a_path: str):
         tempfile_obj = tempfile.NamedTemporaryFile()
         tempfile_obj.write(db_data_uncompressed)
 
-    try:  
+    try:
         entry_map = parse_s4a_db(tempfile_obj.name)
     except Exception as e:
         print(f"error parsing .s4a: {e}")
