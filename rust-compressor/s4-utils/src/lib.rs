@@ -31,6 +31,7 @@ fn writer_loop(
   output_name: PathBuf,
   rx: mpsc::Receiver<Option<WriteThreadInput>>,
 ) -> Result<(), String> {
+  let compress_start_time = std::time::Instant::now();
   let output_blob = PathBuf::from(format!("{}.blob", output_name.to_string_lossy()));
 
   let conn =
@@ -118,15 +119,15 @@ fn writer_loop(
 
   // compress sqlite db file
   let output_db_lz = PathBuf::from(format!("{}.db.xz", output_name.to_string_lossy()));
-  let output_db_size = compress_utils::compress(&output_db, &output_db_lz, CompressionType::LZMA)
-    .map_err(|e| format!("at compressing db file: {e}"))?;
 
+  let compress_end_time = std::time::Instant::now();
+  println!("Compression time: {:.2}s", (compress_end_time - compress_start_time).as_secs_f32());
   println!("muxing db and blob");
   let s4a_writer =
     fs::File::create(&output_name).map_err(|e| format!("at opening {:?}: {e}", &output_name))?;
   let mut s4a_writer = io::BufWriter::with_capacity(write_buffer_size as usize, s4a_writer);
-  // let output_db_size =
-  //   output_db_lz.metadata().map_err(|e| format!("at getting db file size: {e}"))?.len();
+  let output_db_size =
+    output_db_lz.metadata().map_err(|e| format!("at getting db file size: {e}"))?.len();
   s4a_writer
     .write(&output_db_size.to_be_bytes())
     .map_err(|e| format!("at writing db size to s4a file: {e}"))?;
@@ -147,6 +148,9 @@ fn writer_loop(
     .inspect_err(|e| eprintln!("at deleting temp file {:?}: {e}", &output_db));
   let _ = fs::remove_file(&output_blob)
     .inspect_err(|e| eprintln!("at deleting temp file {:?}: {e}", &output_blob));
+
+  let muxing_end_time = std::time::Instant::now();
+  println!("Muxing time: {:.2}s", (muxing_end_time - compress_end_time).as_secs_f32());
   Ok(())
 }
 
