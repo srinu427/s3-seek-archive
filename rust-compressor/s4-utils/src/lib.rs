@@ -118,14 +118,15 @@ fn writer_loop(
 
   // compress sqlite db file
   let output_db_lz = PathBuf::from(format!("{}.db.xz", output_name.to_string_lossy()));
-  compress_utils::compress(&output_db, &output_db_lz, CompressionType::LZMA)
+  let output_db_size = compress_utils::compress(&output_db, &output_db_lz, CompressionType::LZMA)
     .map_err(|e| format!("at compressing db file: {e}"))?;
 
   println!("muxing db and blob");
-  let mut s4a_writer =
+  let s4a_writer =
     fs::File::create(&output_name).map_err(|e| format!("at opening {:?}: {e}", &output_name))?;
-  let output_db_size =
-    output_db_lz.metadata().map_err(|e| format!("at getting db file size: {e}"))?.len();
+  let mut s4a_writer = io::BufWriter::with_capacity(write_buffer_size as usize, s4a_writer);
+  // let output_db_size =
+  //   output_db_lz.metadata().map_err(|e| format!("at getting db file size: {e}"))?.len();
   s4a_writer
     .write(&output_db_size.to_be_bytes())
     .map_err(|e| format!("at writing db size to s4a file: {e}"))?;
@@ -133,10 +134,12 @@ fn writer_loop(
     fs::File::open(&output_db_lz).map_err(|e| format!("at opening {:?}: {e}", &output_db_lz))?;
   io::copy(&mut output_db_fr, &mut s4a_writer)
     .map_err(|e| format!("at writing to s4a file: {e}"))?;
-  let mut output_blob_fr =
+  let output_blob_fr =
     fs::File::open(&output_blob).map_err(|e| format!("at opening {:?}: {e}", &output_blob))?;
+  let mut output_blob_fr = io::BufReader::with_capacity(write_buffer_size as usize, output_blob_fr);
   io::copy(&mut output_blob_fr, &mut s4a_writer)
     .map_err(|e| format!("at writing blob to s4a file: {e}"))?;
+  s4a_writer.flush().map_err(|e| format!("at flushing data after muxing: {e}"))?;
 
   let _ = fs::remove_file(&output_db_lz)
     .inspect_err(|e| eprintln!("at deleting temp file {:?}: {e}", &output_db_lz));
