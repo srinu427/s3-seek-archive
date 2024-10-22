@@ -213,7 +213,7 @@ pub fn compress_directory(
                   });
               });
           } else {
-            let _ = compress_utils::compress_in_mem(entry.path(), CompressionType::LZMA)
+            let _ = compress_utils::compress_in_mem(entry.path(), compression)
               .inspect_err(|e| eprintln!("error compressing {:?}: {e}", entry.path()))
               .map(|data| {
                 let _ = tx_thread_owned
@@ -359,14 +359,29 @@ impl LocalS4ArchiveReader {
       }
     });
   }
+
+  pub fn extract_regexp_files(&self, output_dir: &Path, pattern: &str) {
+    let re_obj = regex::Regex::new(pattern)
+      .inspect_err(|e| eprintln!("invalid regex \"{pattern}\": {e}"));
+    let Ok(re_obj) = re_obj else { return; };
+    self.entry_map.clone().into_par_iter().for_each(|(_, entry_info)| {
+      if !re_obj.is_match(&entry_info.name) {
+        return;
+      }
+      if let Err(e) = self.extract_entry(entry_info, output_dir.to_path_buf()) {
+        eprintln!("error while extracting: {e}. skipping")
+      }
+    });
+  }
 }
 
 pub fn uncompress_archive(
   archive_path: &Path,
   output_path: &Path,
   _num_threads: u32,
+  pattern: &str,
 ) -> Result<(), String> {
   let archive_reader = LocalS4ArchiveReader::from(archive_path)?;
-  archive_reader.extract_all_files(output_path);
+  archive_reader.extract_regexp_files(output_path, pattern);
   Ok(())
 }

@@ -56,13 +56,19 @@ pub fn compress(
     CompressionType::LZMA => {
       let mut lzma_writer = lzma::LzmaWriter::new_compressor(fw, 9)
         .map_err(|e| format!("at initializing lzma compressor: {e}"))?;
-      io::copy(&mut buf_reader, &mut lzma_writer)
-        .map_err(|e| format!("at compressing {file_path:?}: {e}"))?
+      let out_size = io::copy(&mut buf_reader, &mut lzma_writer)
+        .map_err(|e| format!("at compressing {file_path:?}: {e}"))?;
+      lzma_writer.finish()
+        .map_err(|e| format!("at flushing to {file_path:?}: {e}"))?;
+      out_size
     },
     CompressionType::LZ4 => {
       let mut lz4_writer = lz4_flex::frame::FrameEncoder::new(fw);
-      io::copy(&mut buf_reader, &mut lz4_writer)
-        .map_err(|e| format!("at compressing {file_path:?}: {e}"))?
+      let out_size = io::copy(&mut buf_reader, &mut lz4_writer)
+        .map_err(|e| format!("at compressing {file_path:?}: {e}"))?;
+      lz4_writer.flush()
+        .map_err(|e| format!("at flushing to {file_path:?}: {e}"))?;
+      out_size
     },
   };
   Ok(write_size)
@@ -92,13 +98,19 @@ pub fn decompress(file_path: &Path, out_path: &Path, compression: CompressionTyp
     CompressionType::LZMA => {
       let mut lzma_reader = lzma::LzmaReader::new_decompressor(fr)
         .map_err(|e| format!("at initializing lzma un-compressor: {e}"))?;
-      io::copy(&mut lzma_reader, &mut buf_writer)
-        .map_err(|e| format!("at un-compressing {file_path:?}: {e}"))?
+      let out_size = io::copy(&mut lzma_reader, &mut buf_writer)
+        .map_err(|e| format!("at un-compressing {file_path:?}: {e}"))?;
+      buf_writer.flush()
+        .map_err(|e| format!("at flushing to {out_path:?}: {e}"))?;
+      out_size
     },
     CompressionType::LZ4 => {
       let mut lz4_reader = lz4_flex::frame::FrameDecoder::new(fr);
-      io::copy(&mut lz4_reader, &mut buf_writer)
-        .map_err(|e| format!("at un-compressing {file_path:?}: {e}"))?
+      let out_size = io::copy(&mut lz4_reader, &mut buf_writer)
+        .map_err(|e| format!("at un-compressing {file_path:?}: {e}"))?;
+      buf_writer.flush()
+        .map_err(|e| format!("at flushing to {out_path:?}: {e}"))?;
+      out_size
     },
   };
   Ok(write_size)
@@ -109,13 +121,19 @@ pub fn decompress_stream<R: io::Read, W: io::Write>(inp: R, out: &mut W, compres
     CompressionType::LZMA => {
       let mut lzma_reader = lzma::LzmaReader::new_decompressor(inp)
         .map_err(|e| format!("at initializing lzma un-compressor: {e}"))?;
-      io::copy(&mut lzma_reader, out)
-        .map_err(|e| format!("at un-compressing stream: {e}"))?
+      let out_size = io::copy(&mut lzma_reader, out)
+        .map_err(|e| format!("at un-compressing stream: {e}"))?;
+      out.flush()
+        .map_err(|e| format!("at flushing stream: {e}"))?;
+      out_size
     },
     CompressionType::LZ4 => {
       let mut lz4_reader = lz4_flex::frame::FrameDecoder::new(inp);
-      io::copy(&mut lz4_reader, out)
-        .map_err(|e| format!("at un-compressing stream: {e}"))?
+      let out_size = io::copy(&mut lz4_reader, out)
+        .map_err(|e| format!("at un-compressing stream: {e}"))?;
+      out.flush()
+        .map_err(|e| format!("at flushing to stream: {e}"))?;
+      out_size
     },
   };
   Ok(write_size)

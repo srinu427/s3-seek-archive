@@ -32,8 +32,8 @@ struct CompressArgs {
   /// one more thread will be used for IO
   #[arg(long, short = 't', default_value_t = 1)]
   thread_count: u32,
-  /// Number of files to compress in parallel (excluding the main thread).
-  /// one more thread will be used for IO
+  /// Compression to use. Defaults to LZ4
+  /// supported: LZMA, LZ4
   #[arg(long, short = 'c', default_value_t = String::from("LZ4"))]
   compression: String,
   /// Max size of file in bytes to be processed in memory instead of writing to temp file.
@@ -56,6 +56,9 @@ struct UncompressArgs {
   /// NOTE: currently ignored. Number of files to uncompress in parallel (excluding the main thread).
   #[arg(long, short = 't', default_value_t = 1)]
   thread_count: u32,
+  /// regex pattern of files to extract
+  #[arg(long, short = 'p', default_value_t = String::from(".*"))]
+  pattern: String,
 }
 
 fn main() {
@@ -78,6 +81,7 @@ fn main() {
         &uncompress_args.input_path,
         &uncompress_args.output_path,
         uncompress_args.thread_count,
+        &uncompress_args.pattern
       ) {
         eprintln!("{e}");
       }
