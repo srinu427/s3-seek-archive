@@ -119,6 +119,8 @@ fn writer_loop(
 
   // compress sqlite db file
   let output_db_lz = PathBuf::from(format!("{}.db.xz", output_name.to_string_lossy()));
+  compress_utils::compress(&output_db, &output_db_lz, CompressionType::LZMA)
+    .map_err(|e| format!("at compressing db file: {e}"))?;
 
   let compress_end_time = std::time::Instant::now();
   println!("Compression time: {:.2}s", (compress_end_time - compress_start_time).as_secs_f32());
