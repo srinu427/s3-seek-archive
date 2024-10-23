@@ -268,7 +268,7 @@ pub fn compress_directory(
 }
 
 pub fn extract_db(inp: &Path, out: &Path) -> Result<u64, String> {
-  if !inp.ends_with(".s4a") {
+  if !inp.to_string_lossy().ends_with(".s4a") {
     return Err("expecting .s4a file to extract header from".to_string());
   }
   let mut fr = fs::File::open(inp)
@@ -296,6 +296,7 @@ pub fn demux_s4a(inp: &Path) -> Result<(), String> {
   let mut fw = fs::File::create(&blob_path).map_err(|e| format!("at opening {:?}: {e}", &blob_path))?;
   fr.seek(SeekFrom::Start(blob_offset)).map_err(|e| format!("at seeking to blob: {e}"))?;
   io::copy(&mut fr, &mut fw).map_err(|e| format!("at copying blob: {e}"))?;
+  fw.flush().map_err(|e| format!("at flushing blob: {e}"))?;
   Ok(())
 }
 
@@ -390,9 +391,9 @@ pub fn uncompress_archive(
   _num_threads: u32,
   pattern: &str,
 ) -> Result<(), String> {
-  let archive_reader = if archive_path.ends_with(".s4a") {
+  let archive_reader = if archive_path.to_string_lossy().ends_with(".s4a") {
     LocalS4ArchiveReader::from_s4a(archive_path)?
-  } else if archive_path.ends_with(".s4a.db") {
+  } else if archive_path.to_string_lossy().ends_with(".s4a.db") {
     LocalS4ArchiveReader::from_s4a_db(archive_path)?
   } else {
     return Err("unknown file extension. Expecting a .s4a ot .s4a.db".to_string());

@@ -1,5 +1,6 @@
 use clap::{Args, Parser, Subcommand};
 use s4_utils::compress_directory;
+use s4_utils::demux_s4a;
 use s4_utils::mux_db_and_blob;
 use s4_utils::uncompress_archive;
 use s4_utils::CompressionType;
@@ -86,7 +87,7 @@ fn main() {
   let args = AppArgs::parse();
   match args.command {
     AppCommands::Compress(mut compress_args) => {
-      if !compress_args.output_path.ends_with(".s4a") {
+      if !compress_args.output_path.to_string_lossy().ends_with(".s4a") {
         compress_args.output_path = compress_args.output_path.with_extension("s4a");
       }
       if let Err(e) = compress_directory(
@@ -112,11 +113,11 @@ fn main() {
       }
     }
     AppCommands::Mux(mux_args) => {
-      if !mux_args.input_path.ends_with(".s4a.db") {
+      if !mux_args.input_path.to_string_lossy().ends_with(".s4a.db") {
         eprintln!("expected file with extension of .s4a.db");
         return;
       }
-      let blob_path = mux_args.input_path.with_extension(".blob");
+      let blob_path = mux_args.input_path.with_extension("blob");
       if let Err(e) = mux_db_and_blob(
         &mux_args.input_path,
         &blob_path,
@@ -125,9 +126,12 @@ fn main() {
       }
     },
     AppCommands::Demux(demux_args) => {
-      if !demux_args.input_path.ends_with(".s4a") {
+      if !demux_args.input_path.to_string_lossy().ends_with(".s4a") {
         eprintln!("expected file with extension of .s4a");
         return;
+      }
+      if let Err(e) = demux_s4a(&demux_args.input_path) {
+        eprintln!("{e}");
       }
     },
   }
