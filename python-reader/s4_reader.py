@@ -1,5 +1,6 @@
 from enum import Enum
 import lzma
+import os
 import sqlite3
 import tempfile
 from typing import Any, Dict
@@ -95,6 +96,28 @@ def make_s4a_reader_s3(s3_client: Any, bucket_name: str, object_name: str):
 
 
 @dataclass
+class S4AFileReaderLocal:
+    blob_path: str
+    blob_offset: int
+    entry_info: S4AEntryMetadata
+
+    def read(self):
+        try:
+            with open(self.blob_path, 'rb') as fr:
+                fr.seek(self.entry_info.offset + self.blob_offset)
+                compressed_data = fr.read(self.entry_info.size)
+        except Exception as e:
+            print(f"error getting file from blob: {e}")
+            return None
+        try:
+            uncompressed_data = lzma.decompress(compressed_data)
+        except Exception as e:
+            print(f"error un-compressing data: {e}")
+            return None
+        return uncompressed_data
+
+
+@dataclass
 class S4AReaderLocal:
     blob_path: str
     blob_offset: int
@@ -102,45 +125,59 @@ class S4AReaderLocal:
 
     def get_file(self, name: str):
         if name in self.entry_map:
-            entry_info = self.entry_map[name]
-            try:
-                with open(self.blob_path, 'rb') as fr:
-                    fr.seek(entry_info.offset + self.blob_offset)
-                    compressed_data = fr.read(entry_info.size)
-            except Exception as e:
-                print(f"error getting file from blob: {e}")
-                return None
-            try:
-                uncompressed_data = lzma.decompress(compressed_data)
-            except Exception as e:
-                print(f"error un-compressing data: {e}")
-                return None
-            return uncompressed_data
-
-
-def make_s4a_reader_local(s4a_path: str):
-    db_size = bytearray()
-    try:
-        fr = open(s4a_path, 'rb')
-    except Exception as e:
-        print(f"error opening .s4a: {e}")
+            entry_reader = S4AFileReaderLocal(
+                blob_path=self.blob_path,
+                blob_offset=self.blob_offset,
+                entry_info=self.entry_map[name],
+            )
+            return entry_reader.read()
         return None
-    with fr:
-        db_size.extend(fr.read(8))
-        db_size_int = int.from_bytes(db_size, byteorder='big')
-        db_data = fr.read(db_size_int)
-        db_data_uncompressed = lzma.decompress(db_data)
-        tempfile_obj = tempfile.NamedTemporaryFile()
-        tempfile_obj.write(db_data_uncompressed)
 
-    try:
-        entry_map = parse_s4a_db(tempfile_obj.name)
-    except Exception as e:
-        print(f"error parsing .s4a: {e}")
+
+    def get_file_reader(self, name: str):
+        if name in self.entry_map:
+            return S4AFileReaderLocal(
+                blob_path=self.blob_path,
+                blob_offset=self.blob_offset,
+                entry_info=self.entry_map[name],
+            )
         return None
-    return S4AReaderLocal(s4a_path, db_size_int + 8, entry_map)
+
+
+def make_s4a_reader_local(archive_path: str):
+    if archive_path.endswith(".s4a"):
+        db_size = bytearray()
+        try:
+            fr = open(archive_path, 'rb')
+        except Exception as e:
+            print(f"error opening .s4a: {e}")
+            return None
+        with fr:
+            db_size.extend(fr.read(8))
+            db_size_int = int.from_bytes(db_size, byteorder='big')
+            db_data = fr.read(db_size_int)
+            db_data_uncompressed = lzma.decompress(db_data)
+            tempfile_obj = tempfile.NamedTemporaryFile()
+            tempfile_obj.write(db_data_uncompressed)
+
+        try:
+            entry_map = parse_s4a_db(tempfile_obj.name)
+        except Exception as e:
+            print(f"error parsing .s4a: {e}")
+            return None
+        return S4AReaderLocal(archive_path, db_size_int + 8, entry_map)
+    elif archive_path.endswith(".s4a.db"):
+        try:
+            entry_map = parse_s4a_db(archive_path)
+        except Exception as e:
+            print(f"error parsing .s4a.db: {e}")
+            return None
+        return S4AReaderLocal(archive_path[:-3] + ".blob", 0, entry_map)
+    else:
+        return None
+
 
 if __name__ == "__main__":
-    reader = make_s4a_reader_local("/Users/sadigopu/RustroverProjects/s3-seek-archive/rust-compressor/target_archive.s4a")
+    reader = make_s4a_reader_local("/Users/sadigopu/RustroverProjects/s3-seek-archive/rust-compressor/target.s4a")
     print(reader.entry_map)
     pass
