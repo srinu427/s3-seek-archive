@@ -1,4 +1,5 @@
 from enum import Enum
+import lz4
 import lzma
 import os
 import sqlite3
@@ -6,6 +7,8 @@ import tempfile
 from typing import Any, Dict
 
 from dataclasses import dataclass
+
+import lz4.frame
 
 
 class CompressionType(Enum):
@@ -110,7 +113,12 @@ class S4AFileReaderLocal:
             print(f"error getting file from blob: {e}")
             return None
         try:
-            uncompressed_data = lzma.decompress(compressed_data)
+            if self.entry_info.compresssion == "LZMA":
+                uncompressed_data = lzma.decompress(compressed_data)
+            elif self.entry_info.compresssion == "LZ4":
+                uncompressed_data = lz4.frame.decompress(compressed_data)
+            else:
+                return None
         except Exception as e:
             print(f"error un-compressing data: {e}")
             return None
