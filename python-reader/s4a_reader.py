@@ -133,13 +133,10 @@ class S4AReaderLocal:
     entry_map: Dict[str, S4AEntryMetadata]
 
     def get_file(self, name: str):
-        if name in self.entry_map:
-            entry_reader = S4AFileReaderLocal(
-                blob_path=self.blob_path,
-                blob_offset=self.blob_offset,
-                entry_info=self.entry_map[name],
-            )
+        entry_reader = self.get_file_reader(name) 
+        if entry_reader is not None:
             return entry_reader.read()
+        print(f"can't find {name} in archive")
         return None
 
 
@@ -150,6 +147,7 @@ class S4AReaderLocal:
                 blob_offset=self.blob_offset,
                 entry_info=self.entry_map[name],
             )
+        print(f"can't find {name} in archive")
         return None
 
 
