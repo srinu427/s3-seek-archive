@@ -118,6 +118,7 @@ class S4AFileReaderLocal:
             elif self.entry_info.compresssion == "LZ4":
                 uncompressed_data = lz4.frame.decompress(compressed_data)
             else:
+                print(f"error: unknown compression type: {self.entry_info.compresssion}")
                 return None
         except Exception as e:
             print(f"error un-compressing data: {e}")
