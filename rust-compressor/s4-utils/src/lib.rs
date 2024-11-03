@@ -2,6 +2,7 @@ mod compress_utils;
 mod header_utils;
 
 pub use compress_utils::CompressionType;
+use crossbeam_channel as cc;
 use header_utils::S4ArchiveEntryDetails;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
@@ -10,7 +11,6 @@ use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
 use std::{fs, io, thread, time};
 use walkdir::WalkDir;
 
@@ -30,7 +30,7 @@ fn writer_loop(
   write_buffer_size: u64,
   db_path: PathBuf,
   blob_path: PathBuf,
-  rx: mpsc::Receiver<Option<WriteThreadInput>>,
+  rx: cc::Receiver<Option<WriteThreadInput>>,
 ) -> Result<(), String> {
   let compress_start_time = std::time::Instant::now();
 
@@ -186,7 +186,7 @@ pub fn compress_directory(
     .build()
     .map_err(|e| format!("error initializing thread pool: {e}"))?;
 
-  let (tx, rx) = mpsc::channel();
+  let (tx, rx) = cc::bounded(std::cmp::max(num_threads as _, 256));
   let output_path_owned = output_path.to_path_buf();
   let t_handle = thread::spawn(move || {
     let blob_path = PathBuf::from(format!("{}.blob", output_path_owned.to_string_lossy()));
