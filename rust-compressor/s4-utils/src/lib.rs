@@ -6,7 +6,6 @@ use crossbeam_channel as cc;
 use header_utils::S4ArchiveEntryDetails;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
-use std::cmp::max;
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::FileExt;
@@ -40,7 +39,7 @@ fn writer_loop(
 
   // Writer to output file
   let mut buf_writer = io::BufWriter::with_capacity(
-    max(128 * 1024, write_buffer_size as usize),
+    std::cmp::max(128 * 1024, write_buffer_size as usize),
     fs::File::create(&blob_path).map_err(|e| format!("at opening {:?}: {e}", &blob_path))?,
   );
 
