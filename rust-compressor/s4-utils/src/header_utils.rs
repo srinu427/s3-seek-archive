@@ -71,7 +71,7 @@ impl<'a> HeaderDBWriter<'a> {
   pub fn insert_entry(&mut self, entry: S4ArchiveEntryDetails) -> Result<(), String> {
     self
       .insert_stmt
-      .execute((&entry.name, "FILE", entry.offset, entry.size, entry.compression.to_string()))
+      .execute((&entry.name, entry._type, entry.offset, entry.size, entry.compression.to_string()))
       .map_err(|e| format!("error adding {} to index: {e}", &entry.name))?;
     Ok(())
   }
