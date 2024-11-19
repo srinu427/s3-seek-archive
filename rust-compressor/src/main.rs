@@ -1,6 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use s4_utils::compress_directory;
 use s4_utils::demux_s4a;
+use s4_utils::ls_archive;
 use s4_utils::mux_db_and_blob;
 use s4_utils::uncompress_archive;
 use s4_utils::CompressionType;
@@ -21,6 +22,7 @@ enum AppCommands {
   Decompress(DecompressArgs),
   Mux(MuxArgs),
   Demux(DemuxArgs),
+  Ls(LsArgs),
 }
 
 #[derive(Args)]
@@ -83,6 +85,16 @@ struct DemuxArgs {
   input_path: PathBuf,
 }
 
+#[derive(Args)]
+struct LsArgs {
+  /// Input s4a or s4a.db file name
+  #[arg(long, short = 'i')]
+  input_path: PathBuf,
+  /// regex pattern of files to list
+  #[arg(long, short = 'p', default_value_t = String::from(".*"))]
+  pattern: String,
+}
+
 fn main() {
   let args = AppArgs::parse();
   match args.command {
@@ -131,6 +143,14 @@ fn main() {
         return;
       }
       if let Err(e) = demux_s4a(&demux_args.input_path) {
+        eprintln!("{e}");
+      }
+    },
+    AppCommands::Ls(ls_args) => {
+      if let Err(e) = ls_archive(
+        &ls_args.input_path,
+        &ls_args.pattern
+      ) {
         eprintln!("{e}");
       }
     },

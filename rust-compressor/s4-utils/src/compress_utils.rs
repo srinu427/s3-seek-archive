@@ -81,7 +81,7 @@ pub fn compress_in_mem(file_path: &Path, compression: CompressionType) -> Result
       lzma::compress(&input_data, 9).map_err(|e| format!("at compressing {file_path:?}: {e}"))?
     }
     CompressionType::LZ4 => {
-      let compressed_data = vec![];
+      let compressed_data = Vec::with_capacity(32 * 1024 * 1024);
       let mut lz4_writer = lz4_flex::frame::FrameEncoder::new(compressed_data);
       lz4_writer.write_all(&input_data).map_err(|e| format!("at compressing {file_path:?}: {e}"))?;
       lz4_writer.finish().map_err(|e| format!("at compressing {file_path:?}: {e}"))?

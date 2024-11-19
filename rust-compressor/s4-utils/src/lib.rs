@@ -369,6 +369,34 @@ impl LocalS4ArchiveReader {
     });
   }
 
+  pub fn list_regexp_files(&self, pattern: &str) {
+    let re_obj = regex::Regex::new(pattern)
+      .inspect_err(|e| eprintln!("invalid regex \"{pattern}\": {e}"));
+    let Ok(re_obj) = re_obj else { return; };
+    eprintln!(
+      "{:<12}{:<100}{:>12}{:>12}{:>12}",
+      "TYPE",
+      "ENTRY NAME",
+      "COMPRESSION",
+      "SIZE",
+      "OFFSET",
+    );
+    eprintln!("{}", "-".repeat(148));
+    self.entry_map.clone().into_par_iter().for_each(|(_, entry_info)| {
+      if !re_obj.is_match(&entry_info.name) {
+        return;
+      }
+      eprintln!(
+        "{:<12}{:<100}{:>12}{:>12}{:>12}",
+        entry_info._type,
+        entry_info.name,
+        entry_info.compression.to_string(),
+        entry_info.size,
+        entry_info.offset
+      );
+    });
+  }
+
   pub fn extract_regexp_files(&self, output_dir: &Path, pattern: &str) {
     let re_obj = regex::Regex::new(pattern)
       .inspect_err(|e| eprintln!("invalid regex \"{pattern}\": {e}"));
@@ -398,5 +426,20 @@ pub fn uncompress_archive(
     return Err("unknown file extension. Expecting a .s4a ot .s4a.db".to_string());
   };
   archive_reader.extract_regexp_files(output_path, pattern);
+  Ok(())
+}
+
+pub fn ls_archive(
+  archive_path: &Path,
+  pattern: &str,
+) -> Result<(), String> {
+  let archive_reader = if archive_path.to_string_lossy().ends_with(".s4a") {
+    LocalS4ArchiveReader::from_s4a(archive_path)?
+  } else if archive_path.to_string_lossy().ends_with(".s4a.db") {
+    LocalS4ArchiveReader::from_s4a_db(archive_path)?
+  } else {
+    return Err("unknown file extension. Expecting a .s4a ot .s4a.db".to_string());
+  };
+  archive_reader.list_regexp_files(pattern);
   Ok(())
 }
