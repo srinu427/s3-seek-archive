@@ -382,10 +382,9 @@ impl LocalS4ArchiveReader {
       "OFFSET",
     );
     eprintln!("{}", "-".repeat(148));
-    self.entry_map.clone().into_par_iter().for_each(|(_, entry_info)| {
-      if !re_obj.is_match(&entry_info.name) {
-        return;
-      }
+    let mut match_list = self.entry_map.clone().into_iter().filter_map(|(_, v)| re_obj.is_match(&v.name).then(|| v)).collect::<Vec<_>>();
+    match_list.sort_by_key(|x| x.name.clone());
+    match_list.iter().for_each(|entry_info| {
       eprintln!(
         "{:<12}{:<100}{:>12}{:>12}{:>12}",
         entry_info._type,
