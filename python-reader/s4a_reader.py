@@ -4,6 +4,7 @@ import lzma
 import os
 import sqlite3
 import tempfile
+import zstandard
 from typing import Any, Dict
 
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ import lz4.frame
 class CompressionType(Enum):
     LZMA = "LZMA"
     LZ4 = "LZ4"
+    ZSTD = "ZSTD"
 
 
 @dataclass
@@ -117,6 +119,8 @@ class S4AFileReaderLocal:
                 uncompressed_data = lzma.decompress(compressed_data)
             elif self.entry_info.compresssion == "LZ4":
                 uncompressed_data = lz4.frame.decompress(compressed_data)
+            elif self.entry_info.compresssion == "ZSTD":
+                uncompressed_data = zstandard.ZstdDecompressor().decompress(compressed_data)
             else:
                 print(f"error: unknown compression type: {self.entry_info.compresssion}")
                 return None
@@ -185,6 +189,7 @@ def make_s4a_reader_local(archive_path: str):
 
 
 if __name__ == "__main__":
-    reader = make_s4a_reader_local("/Users/sadigopu/RustroverProjects/s3-seek-archive/rust-compressor/target.s4a")
+    reader = make_s4a_reader_local("/Users/sadigopu/vscodeproj/s3-seek-archive/rust-compressor/ex_arc.s4a.db")
     print(reader.entry_map)
+    print(reader.get_file("CACHEDIR.TAG").decode())
     pass

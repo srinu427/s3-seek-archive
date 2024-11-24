@@ -401,11 +401,12 @@ impl LocalS4ArchiveReader {
       .inspect_err(|e| eprintln!("invalid regex \"{pattern}\": {e}"));
     let Ok(re_obj) = re_obj else { return; };
     self.entry_map.clone().into_par_iter().for_each(|(_, entry_info)| {
-      if !re_obj.is_match(&entry_info.name) {
+      let entry_name = entry_info.name.clone();
+      if !re_obj.is_match(&entry_name) {
         return;
       }
       if let Err(e) = self.extract_entry(entry_info, output_dir.to_path_buf()) {
-        eprintln!("error while extracting: {e}. skipping")
+        eprintln!("error while extracting {}: {e}. skipping", &entry_name)
       }
     });
   }

@@ -7,6 +7,7 @@ use std::{fs, io};
 pub enum CompressionType {
   LZMA = 1,
   LZ4 = 2,
+  ZSTD = 3
 }
 
 impl FromStr for CompressionType {
@@ -16,6 +17,7 @@ impl FromStr for CompressionType {
     match s {
       "LZMA" | "lzma" => Ok(CompressionType::LZMA),
       "LZ4" | "lz4" => Ok(CompressionType::LZ4),
+      "ZSTD" | "zstd" => Ok(CompressionType::ZSTD),
       _ => Ok(CompressionType::LZ4),
     }
   }
@@ -26,6 +28,7 @@ impl ToString for CompressionType {
     match self {
       CompressionType::LZMA => "LZMA".to_string(),
       CompressionType::LZ4 => "LZ4".to_string(),
+      CompressionType::ZSTD => "ZSTD".to_string(),
     }
   }
 }
@@ -49,6 +52,7 @@ pub fn compress(
   compression: CompressionType
 ) -> Result<u64, String> {
   let fr = fs::File::open(file_path).map_err(|e| format!("at opening {file_path:?}: {e}"))?;
+  let inp_len = fr.metadata().map_err(|e| format!("at getting inp file size: {e}"))?.len();
   let fw = fs::File::create(out_path).map_err(|e| format!("at opening {out_path:?}: {e}"))?;
   // 128KB buffers: https://eklitzke.org/efficient-file-copying-on-linux
   let mut buf_reader = io::BufReader::with_capacity(128 * 1024, fr);
@@ -70,6 +74,19 @@ pub fn compress(
         .map_err(|e| format!("at flushing to {file_path:?}: {e}"))?;
       out_size
     },
+    CompressionType::ZSTD => {
+      let mut zstd_writer = zstd::Encoder::new(fw, 5)
+        .map_err(|e| format!("at initializing zstd compressor: {e}"))?;
+      zstd_writer.set_pledged_src_size(Some(inp_len))
+        .map_err(|e| format!("at setting inp len: {e}"))?;
+      zstd_writer.include_contentsize(true)
+        .map_err(|e| format!("at setting inp len include: {e}"))?;
+      let out_size = io::copy(&mut buf_reader, &mut zstd_writer)
+        .map_err(|e| format!("at compressing {file_path:?}: {e}"))?;
+      zstd_writer.finish()
+        .map_err(|e| format!("at flushing to {file_path:?}: {e}"))?;
+      out_size
+    },
   };
   Ok(write_size)
 }
@@ -85,6 +102,17 @@ pub fn compress_in_mem(file_path: &Path, compression: CompressionType) -> Result
       let mut lz4_writer = lz4_flex::frame::FrameEncoder::new(compressed_data);
       lz4_writer.write_all(&input_data).map_err(|e| format!("at compressing {file_path:?}: {e}"))?;
       lz4_writer.finish().map_err(|e| format!("at compressing {file_path:?}: {e}"))?
+    },
+    CompressionType::ZSTD => {
+      let compressed_data = Vec::with_capacity(32 * 1024 * 1024);
+      let mut zstd_writer = zstd::Encoder::new(compressed_data, 5)
+        .map_err(|e| format!("at initializing zstd compressor: {e}"))?;
+      zstd_writer.set_pledged_src_size(Some(input_data.len() as _))
+        .map_err(|e| format!("at setting inp len: {e}"))?;
+      zstd_writer.include_contentsize(true)
+        .map_err(|e| format!("at setting inp len include: {e}"))?;
+      zstd_writer.write_all(&input_data).map_err(|e| format!("at compressing {file_path:?}: {e}"))?;
+      zstd_writer.finish().map_err(|e| format!("at compressing {file_path:?}: {e}"))?
     },
   };
   Ok(output_data)
@@ -108,6 +136,16 @@ pub fn decompress(file_path: &Path, out_path: &Path, compression: CompressionTyp
     CompressionType::LZ4 => {
       let mut lz4_reader = lz4_flex::frame::FrameDecoder::new(fr);
       let out_size = io::copy(&mut lz4_reader, &mut buf_writer)
+        .map_err(|e| format!("at un-compressing {file_path:?}: {e}"))?;
+      buf_writer
+        .flush()
+        .map_err(|e| format!("at flushing to {out_path:?}: {e}"))?;
+      out_size
+    },
+    CompressionType::ZSTD => {
+      let mut zstd_reader = zstd::Decoder::new(fr)
+        .map_err(|e| format!("at initializing zstd un-compressor: {e}"))?;
+      let out_size = io::copy(&mut zstd_reader, &mut buf_writer)
         .map_err(|e| format!("at un-compressing {file_path:?}: {e}"))?;
       buf_writer
         .flush()
@@ -139,6 +177,16 @@ pub fn decompress_stream<R: io::Read, W: io::Write>(inp: R, out: &mut W, compres
         .map_err(|e| format!("at flushing to stream: {e}"))?;
       out_size
     },
+    CompressionType::ZSTD => {
+      let mut zstd_reader = zstd::Decoder::new(inp)
+        .map_err(|e| format!("at initializing zstd un-compressor: {e}"))?;
+      let out_size = io::copy(&mut zstd_reader, out)
+        .map_err(|e| format!("at un-compressing stream: {e}"))?;
+      out
+        .flush()
+        .map_err(|e| format!("at flushing to stream: {e}"))?;
+      out_size
+    },
   };
   Ok(write_size)
 }
@@ -152,6 +200,15 @@ pub fn decompress_from_mem(compressed_data: &[u8], compression: CompressionType)
       let mut lz4_reader = lz4_flex::frame::FrameDecoder::new(compressed_data);
       let mut decompressed_data = vec![];
       lz4_reader
+        .read_to_end(&mut decompressed_data)
+        .map_err(|e| format!("at decompressing: {e}"))?;
+      decompressed_data
+    },
+    CompressionType::ZSTD => {
+      let mut zstd_reader = zstd::Decoder::new(compressed_data)
+        .map_err(|e| format!("at initializing zstd un-compressor: {e}"))?;
+      let mut decompressed_data = vec![];
+      zstd_reader
         .read_to_end(&mut decompressed_data)
         .map_err(|e| format!("at decompressing: {e}"))?;
       decompressed_data
